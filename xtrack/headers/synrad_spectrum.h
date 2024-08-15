@@ -183,17 +183,34 @@ double synrad_gen_photon_energy_normalized(LocalParticle *part)
   double appr, exact, result;
   do {
     if (RandomUniform_generate(part) < ratio) { // use low energy approximation
+      #ifdef GIANNI_DEBUG
+        printf("Low energy approximation\n");
+      #endif
       result=c1+(1.-c1)*RandomUniform_generate(part);
       double tmp = result*result;
       result*=tmp;  	// take to 3rd power;
+      #ifdef GIANNI_DEBUG
+        printf("result = %e\n", result);
+      #endif
       exact=SynRad(result);
       appr=a1/tmp;
     } else {				// use high energy approximation
-      result=xlow-log(RandomUniform_generate(part));
+      double const u = RandomUniform_generate(part);
+      #ifdef GIANNI_DEBUG
+        printf("High energy approximation\n");
+        printf("u = %e\n", u);
+      #endif
+      if (u < 1e-50) {
+          u = 1e-50;
+      }
+      result=xlow-log(u);
       exact=SynRad(result);
       appr=a2*exp(-result);
     }
   } while (exact < appr*RandomUniform_generate(part));	// reject in proportion of approx
+  #ifdef GIANNI_DEBUG
+        printf("result on return = %e\n", result);
+  #endif
   return result; // result now exact spectrum with unity weight
 }
 
@@ -228,13 +245,20 @@ int64_t synrad_emit_photons(LocalParticle *part, double curv /* 1/m */,
     //double beta_gamma = sqrt(gamma*gamma-1); //
     double n = RandomExponential_generate(part); // path_length / mean_free_path;
     // printf("curv = %e\n gamma0 = %e\n lpath = %e\n", curv, gamma0, lpath);
-    // printf("Average_number_of_photons = %e\n", synrad_average_number_of_photons(beta0 * gamma0, curv, lpath));
+    #ifdef GIANNI_DEBUG
+      printf("Average_number_of_photons = %e\n", synrad_average_number_of_photons(beta0 * gamma0, curv, lpath));
+    #endif
     while (n < synrad_average_number_of_photons(beta0 * gamma0, curv, lpath)) {
         nphot++;
         double const c1 = 1.5 * 1.973269804593025e-07; // hbar * c = 1.973269804593025e-07 eV * m
         double const energy_critical = c1 * (gamma*gamma*gamma0) * curv; // eV
         double const energy_loss = synrad_gen_photon_energy_normalized(part) * energy_critical; // eV
+        #ifdef GIANNI_DEBUG
+          printf("energy_critical = %e\n", energy_critical);
+          printf("energy_loss = %e, n = %.5e, nphot = %lld\n", energy_loss, n, nphot);
+        #endif
         if (energy_loss >= energy) {
+            printf("energy_loss >= energy: %e >= %e\n", energy_loss, energy);
             energy = 0.0; // eV
             break;
         }
@@ -261,8 +285,10 @@ int64_t synrad_emit_photons(LocalParticle *part, double curv /* 1/m */,
         }
     }
 
-    if (energy <= 0.0)
+    if (energy <= 0.0){
+      printf("Negative energy: %e\n", energy);
       LocalParticle_set_state(part, XT_LOST_ALL_E_IN_SYNRAD); // used to flag this kind of loss
+    }
     else{
       //LocalParticle_add_to_energy(part, energy-initial_energy, 0);
       double f_t = energy/initial_energy;
