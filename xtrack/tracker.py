@@ -942,6 +942,8 @@ class Tracker:
             tt_resume = _session_to_resume['tt']
             ipp_resume = _session_to_resume['ipp']
             _session_to_resume['resumed'] = True
+            assert particles is None
+            particles = _session_to_resume['particles']
         else:
             (ele_start, ele_stop, num_turns, flag_monitor, monitor,
                 buffer_monitor, offset_monitor,
@@ -1021,8 +1023,6 @@ class Tracker:
                 if (ipp_resume is not None and ipp < ipp_resume):
                     continue
                 elif (ipp_resume is not None and ipp == ipp_resume):
-                    assert particles is None
-                    particles = _session_to_resume['particles']
                     pp = self._parts[ipp]
                     moveback_to_buffer = _session_to_resume['moveback_to_buffer']
                     moveback_to_offset = _session_to_resume['moveback_to_offset']
