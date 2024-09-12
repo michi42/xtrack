@@ -922,6 +922,7 @@ class Tracker:
                 raise ValueError("Particles state is not valid to run on CPU, "
                                  "please call `particles.reorganize()` first.")
 
+        hold_logger = False
         if _session_to_resume is not None:
             if isinstance(_session_to_resume, PipelineStatus):
                 _session_to_resume = _session_to_resume.data
@@ -944,6 +945,7 @@ class Tracker:
             _session_to_resume['resumed'] = True
             assert particles is None
             particles = _session_to_resume['particles']
+            hold_logger = True
         else:
             (ele_start, ele_stop, num_turns, flag_monitor, monitor,
                 buffer_monitor, offset_monitor,
@@ -998,7 +1000,7 @@ class Tracker:
                         p0c = self.line.particle_ref._xobject.p0c[0]
                         particles.update_p0c_and_energy_deviations(p0c)
 
-            if log is not None:
+            if log is not None and not hold_logger:
                 for kk in log:
                     if log[kk] == None:
                         if kk not in self.line.log_last_track:
@@ -1072,6 +1074,7 @@ class Tracker:
                             'moveback_to_buffer': moveback_to_buffer,
                             'moveback_to_offset': moveback_to_offset,
                             'ipp': ipp,
+                            'log':log,
                             'tt': tt,
                             'resumed': False
                         }
