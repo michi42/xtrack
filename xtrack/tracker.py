@@ -945,6 +945,7 @@ class Tracker:
             _session_to_resume['resumed'] = True
             assert particles is None
             particles = _session_to_resume['particles']
+            log = _session_to_resume['log']
             hold_logger = True
         else:
             (ele_start, ele_stop, num_turns, flag_monitor, monitor,
@@ -1000,24 +1001,32 @@ class Tracker:
                         p0c = self.line.particle_ref._xobject.p0c[0]
                         particles.update_p0c_and_energy_deviations(p0c)
 
-            if log is not None and not hold_logger:
-                for kk in log:
-                    if log[kk] == None:
-                        if kk not in self.line.log_last_track:
-                            self.line.log_last_track[kk] = []
-                        self.line.log_last_track[kk].append(self.line.vv[kk])
-                    else:
-                        ff = log[kk]
-                        val = ff(self.line, particles)
-                        if hasattr(ff, '_store'):
-                            for nn in ff._store:
-                                if nn not in self.line.log_last_track:
-                                    self.line.log_last_track[nn] = []
-                                self.line.log_last_track[nn].append(val[nn])
-                        else:
+            state = particles.state
+            if isinstance(particles._context, xo.ContextPyopencl):
+                state = state.get()
+            ii_first_active = int((state > 0).argmax())
+            at_turn = particles._xobject.at_turn[ii_first_active]
+            if log is not None:
+                if not hold_logger:
+                    for kk in log:
+                        if log[kk] == None:
                             if kk not in self.line.log_last_track:
                                 self.line.log_last_track[kk] = []
-                            self.line.log_last_track[kk].append(val)
+                            self.line.log_last_track[kk].append(self.line.vv[kk])
+                        else:
+                            ff = log[kk]
+                            val = ff(self.line, particles)
+                            if hasattr(ff, '_store'):
+                                for nn in ff._store:
+                                    if nn not in self.line.log_last_track:
+                                        self.line.log_last_track[nn] = []
+                                    self.line.log_last_track[nn].append(val[nn])
+                            else:
+                                if kk not in self.line.log_last_track:
+                                    self.line.log_last_track[kk] = []
+                                self.line.log_last_track[kk].append(val)
+                else:
+                    hold_logger = False
 
             moveback_to_buffer = None
             moveback_to_offset = None
