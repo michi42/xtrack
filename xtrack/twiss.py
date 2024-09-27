@@ -850,11 +850,15 @@ def _twiss_open(line, init,
 
     if start == xt.START:
         start = 0
+    elif start == xt.END:
+        start = len(line.element_names) - 1
     elif isinstance(start, str):
         start = line.element_names.index(start)
 
     if end == xt.END:
         end = len(line.element_names) - 1
+    elif end == xt.START:
+        end = 0
     elif isinstance(end, str):
         if end == '_end_point':
             end = len(line.element_names) - 1
@@ -3509,7 +3513,7 @@ def _complete_twiss_init(start, end, init_at, init,
         assert isinstance(init, TwissInit)
         init = init.copy() # To avoid changing the one provided
         if init._needs_complete():
-            assert isinstance(start, str), (
+            assert isinstance(start, (str, xt.match._LOC)), (
                 'start must be provided as name when an incomplete '
                 'init is provided')
             init._complete(line=line,
