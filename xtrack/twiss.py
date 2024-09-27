@@ -356,18 +356,12 @@ def twiss_line(line, particle_ref=None, method=None,
             assert start in [xt.START, xt.END]
             if reverse:
                 start = {xt.START: xt.END, xt.END: xt.START}[start]
-            start = {xt.START: line.element_names[0],
-                     xt.END: line.element_names[-1]}[start]
-        assert isinstance(start, str)  # index not supported anymore
 
     if end is not None:
         if isinstance(end, xt.match._LOC):
             assert end in [xt.START, xt.END]
             if reverse:
                 end = {xt.START: xt.END, xt.END: xt.START}[end]
-            end = {xt.START: line.element_names[0],
-                     xt.END: line.element_names[-1]}[end]
-        assert isinstance(end, str)  # index not supported anymore
 
     if start is not None and end is None:
         # One turn twiss from start to start
@@ -854,9 +848,14 @@ def _twiss_open(line, init,
     if start is None:
         start = 0
 
-    if isinstance(start, str):
+    if start == xt.START:
+        start = 0
+    elif isinstance(start, str):
         start = line.element_names.index(start)
-    if isinstance(end, str):
+
+    if end == xt.END:
+        end = len(line.element_names) - 1
+    elif isinstance(end, str):
         if end == '_end_point':
             end = len(line.element_names) - 1
         else:
@@ -3467,6 +3466,11 @@ def _complete_twiss_init(start, end, init_at, init,
                         ddx, ddpx, ddy, ddpy
                         ):
 
+    if init_at is xt.START:
+        init_at = line.elements[0].name
+    elif init_at is xt.END:
+        init_at = line.elements[-1].name
+
     if start is not None or end is not None:
         assert start is not None and end is not None, (
             'start and end must be provided together')
@@ -3626,7 +3630,14 @@ def _extract_twiss_parameters_with_inverse(Ws):
 def _str_to_index(line, ele, allow_end_point=True):
     if allow_end_point and ele == '_end_point':
         return len(line.element_names)
+    if ele == xt.START:
+        return 0
+    if ele == xt.END:
+        return len(line.element_names) - 1
     if isinstance(ele, str):
+        if line.tracker._tracker_data_base._line_table.rows.is_repeated(ele):
+            raise ValueError(f'Element {ele} is repeated in line. '
+                             'This is not allowed for start-end point of twiss')
         if ele not in line.element_names:
             raise ValueError(f'Element {ele} not found in line')
         return line.element_names.index(ele)
