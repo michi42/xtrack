@@ -532,8 +532,8 @@ def twiss_line(line, particle_ref=None, method=None,
 
     # init is not at the boundary
     if (not periodic and not isinstance(init, str)
-            and init.element_name != start
-            and init.element_name != end):
+            and _str_to_index(line, init.element_name) != _str_to_index(line, start)
+            and _str_to_index(line, init.element_name) != _str_to_index(line, end)):
 
         kwargs = _updated_kwargs_from_locals(kwargs, locals().copy())
         tw_res = _handle_init_inside_range(kwargs)
@@ -3516,8 +3516,16 @@ def _complete_twiss_init(start, end, init_at, init,
             assert isinstance(start, (str, xt.match._LOC)), (
                 'start must be provided as name when an incomplete '
                 'init is provided')
-            init._complete(line=line,
-                    element_name=(init.element_name or start))
+            if init.element_name is not None:
+                ele_name = init.element_name
+            elif start == xt.START:
+                ele_name = line.element_names[0]
+            elif start == xt.END:
+                ele_name = line.element_names[-1]
+            else:
+                ele_name = start
+
+            init._complete(line=line, element_name=ele_name)
 
         if init.reference_frame is None:
             init.reference_frame = {

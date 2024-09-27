@@ -1828,6 +1828,7 @@ def test_arbitrary_start(test_context, collider_for_test_twiss_range):
     line.build_tracker(_buffer=buffer)
 
     tw8_closed = line.twiss(start='ip8')
+    breakpoint()
     tw8_open = line.twiss(start='ip8', betx=1.5, bety=1.5)
 
     tw = line.twiss()
