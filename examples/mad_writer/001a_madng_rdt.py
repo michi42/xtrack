@@ -8,13 +8,19 @@ tw = line.twiss(method='4d')
 
 mng = line.to_madng(sequence_name='lhcb1')
 
+rdts = ["f4000", "f3100", "f2020", "f1120"]
+colums = ['s', 'beta11'] + rdts
+rdt_cmd = 'local rdts = {"' + '", "'.join(rdts) + '"}'
+send_cmd = f'py:send({{mtbl.{", mtbl.".join(colums)}}})'
+
 mng.send('''
 local damap in MAD
 local lhc = MADX.lhcb1
 
 -- list of octupolar RDTs
-local rdts = {"f4000", "f3100", "f2020", "f1120"}
-
+'''
++ rdt_cmd +
+'''
 -- create phase-space damap at 4th order
 local X0 = damap {nv=6, mo=4}
 
@@ -22,9 +28,8 @@ local X0 = damap {nv=6, mo=4}
 local mtbl = twiss {sequence=lhc, X0=X0, trkrdt=rdts, info=2, saverdt=true}
 
 -- send columns to Python
-py:send({mtbl.s, mtbl.beta11, mtbl.f4000, mtbl.f3100, mtbl.f2020, mtbl.f1120})
-
-''')
+'''
++ send_cmd)
 
 
 s, beta11, f4000, f3100, f2020, f1120 = mng.recv()
