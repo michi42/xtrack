@@ -8,10 +8,17 @@ tw = line.twiss(method='4d')
 
 mng = line.to_madng(sequence_name='lhcb1')
 
+line._xdeps_vref._owner.mng = mng
+
 rdts = ["f4000", "f3100", "f2020", "f1120", 'f1001']
-colums = ['s', 'beta11'] + rdts
+tw_columns = ['s', 'beta11'] 
+# , 'x', 'px', 'y', 'py', 't', 'pt',
+#               'beta11', 'beta22', 'alf11', 'alf22',
+#               'dx', 'dpx', 'dy', 'dpy',
+#               'mu1', 'mu2']
+columns = tw_columns + rdts
 rdt_cmd = 'local rdts = {"' + '", "'.join(rdts) + '"}'
-send_cmd = f'py:send({{mtbl.{", mtbl.".join(colums)}}})'
+send_cmd = f'py:send({{mtbl.{", mtbl.".join(columns)}}})'
 
 mng.send('''
 local damap in MAD
@@ -32,13 +39,14 @@ local mtbl = twiss {sequence=lhc, X0=X0, trkrdt=rdts, info=2, saverdt=true}
 + send_cmd)
 
 out = mng.recv()
+out_dct = {k: v for k, v in zip(columns, out)}
 
 # Add to table
 assert len(out[0]) == len(tw) + 1
-for ii, nn in enumerate(colums):
-    if nn in tw.keys():
-        nn = nn + '_ng'
-    tw[nn] = out[ii][:-1]
+for nn in tw_columns:
+    tw[nn+'_ng'] = out_dct[nn][:-1]
+for nn in rdts:
+    tw[nn] = out_dct[nn][:-1]
 
 # dct = {k: v[:-1] for k, v in zip(colums, out)}
 # dct['name'] = tw.name
