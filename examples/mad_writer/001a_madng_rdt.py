@@ -11,7 +11,9 @@ mng = line.to_madng(sequence_name='lhcb1')
 line._xdeps_vref._owner.mng = mng
 
 rdts = ["f4000", "f3100", "f2020", "f1120", 'f1001']
-tw_columns = ['s', 'beta11'] 
+tw_columns = ['s', 'beta11', 'beta22', 'alfa11', 'alfa22',
+              'x', 'px', 'y', 'py', 't', 'pt',
+              'dx', 'dy', 'dpx', 'dpy', 'mu1', 'mu2']
 # , 'x', 'px', 'y', 'py', 't', 'pt',
 #               'beta11', 'beta22', 'alf11', 'alf22',
 #               'dx', 'dpx', 'dy', 'dpy',
