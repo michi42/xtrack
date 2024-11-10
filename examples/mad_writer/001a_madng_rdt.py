@@ -31,17 +31,20 @@ local mtbl = twiss {sequence=lhc, X0=X0, trkrdt=rdts, info=2, saverdt=true}
 '''
 + send_cmd)
 
-
-s, beta11, f4000, f3100, f2020, f1120 = mng.recv()
+out = mng.recv()
+assert len(out[0]) == len(tw) + 1
+dct = {k: v[:-1] for k, v in zip(colums, out)}
+dct['name'] = tw.name
+tng = xt.Table(dct)
 
 import matplotlib.pyplot as plt
 plt.close('all')
 plt.figure(1)
 
-plt.plot(s, np.abs(f4000), label='f4000')
-plt.plot(s, np.abs(f2020), label='f2020')
-plt.plot(s, np.abs(f1120), label='f1120')
-plt.plot(s, np.abs(f3100), label='f3100')
+plt.plot(tng.s, np.abs(tng.f4000), label='f4000')
+plt.plot(tng.s, np.abs(tng.f2020), label='f2020')
+plt.plot(tng.s, np.abs(tng.f1120), label='f1120')
+plt.plot(tng.s, np.abs(tng.f3100), label='f3100')
 plt.xlabel('s [m]')
 plt.ylabel(r'|f_{jklm}|')
 plt.legend()
