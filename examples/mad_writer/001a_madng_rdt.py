@@ -26,7 +26,7 @@ mng.send('''
 local damap in MAD
 local lhc = MADX.lhcb1
 
--- list of octupolar RDTs
+-- list of RDTs
 '''
 + rdt_cmd +
 '''
