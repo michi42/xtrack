@@ -8,7 +8,7 @@ tw = line.twiss(method='4d')
 
 mng = line.to_madng(sequence_name='lhcb1')
 
-rdts = ["f4000", "f3100", "f2020", "f1120"]
+rdts = ["f4000", "f3100", "f2020", "f1120", 'f1001']
 colums = ['s', 'beta11'] + rdts
 rdt_cmd = 'local rdts = {"' + '", "'.join(rdts) + '"}'
 send_cmd = f'py:send({{mtbl.{", mtbl.".join(colums)}}})'

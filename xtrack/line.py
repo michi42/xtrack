@@ -9,6 +9,7 @@ import logging
 import uuid
 import os
 from collections import defaultdict
+from .varproxy import VarProxy
 
 from contextlib import contextmanager
 from copy import deepcopy
@@ -3777,9 +3778,7 @@ class Line:
 
     def _init_var_management(self, dct=None):
 
-        from collections import defaultdict
-
-        _var_values = defaultdict(lambda: 0)
+        _var_values = VarProxy()
         _var_values.default_factory = None
 
         functions = Functions()
