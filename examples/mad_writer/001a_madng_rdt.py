@@ -4,7 +4,9 @@ import xtrack as xt
 line = xt.Line.from_json(
     '../../test_data/hllhc15_thick/lhc_thick_with_knobs.json')
 
-mng = line.to_madng(sequence_name='lhcb1')
+sequence_name='dummy'
+mng = line.to_madng(sequence_name=sequence_name)
+mng._sequence_name = sequence_name
 
 line._xdeps_vref._owner.mng = mng
 
@@ -16,10 +18,7 @@ def _tw_ng(line, rdts=[], tw=None):
     tw_columns = ['s', 'beta11', 'beta22', 'alfa11', 'alfa22',
                 'x', 'px', 'y', 'py', 't', 'pt',
                 'dx', 'dy', 'dpx', 'dpy', 'mu1', 'mu2']
-    # , 'x', 'px', 'y', 'py', 't', 'pt',
-    #               'beta11', 'beta22', 'alf11', 'alf22',
-    #               'dx', 'dpx', 'dy', 'dpy',
-    #               'mu1', 'mu2']
+
     columns = tw_columns + rdts
     rdt_cmd = 'local rdts = {"' + '", "'.join(rdts) + '"}'
     send_cmd = f'py:send({{mtbl.{", mtbl.".join(columns)}}})'
@@ -27,8 +26,9 @@ def _tw_ng(line, rdts=[], tw=None):
     if len(rdts) > 0:
         mng_script = ('''
         local damap in MAD
-        local lhc = MADX.lhcb1
-
+        '''
+        f'local seq = MADX.{mng._sequence_name}'
+        '''
         -- list of RDTs
         '''
         + rdt_cmd +
@@ -37,17 +37,20 @@ def _tw_ng(line, rdts=[], tw=None):
         local X0 = damap {nv=6, mo=4}
 
         -- twiss with RDTs
-        local mtbl = twiss {sequence=lhc, X0=X0, trkrdt=rdts, info=2, saverdt=true}
+        local mtbl = twiss {sequence=seq, X0=X0, trkrdt=rdts, info=2, saverdt=true}
 
         -- send columns to Python
         '''
         + send_cmd)
     else:
         mng_script = ('''
-        local lhc = MADX.lhcb1
+        local damap in MAD
+        '''
+        f'local seq = MADX.{mng._sequence_name}'
+        '''
 
         -- twiss with RDTs
-        local mtbl = twiss {sequence=lhc, method=4, mapdef=2, implicit=true, nslice=3}
+        local mtbl = twiss {sequence=seq, method=4, mapdef=2, implicit=true, nslice=3}
 
         -- send columns to Python
         '''
