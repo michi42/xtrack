@@ -68,6 +68,48 @@ def _tw_ng(line, rdts=[], tw=None):
     for nn in rdts:
         tw[nn] = out_dct[nn][:-1]
 
+    mng_script_scalar = (
+        f'local seq = MADX.{mng._sequence_name}'
+        '''
+        local track in MAD  -- like "from MAD import track"
+        local mytrktable, mytrkflow = MAD.track{sequence=seq, method=4,
+                                                mapdef=4, nslice=3}
+
+        local normal in MAD.gphys  -- like "from MAD.gphys import normal"
+        local my_norm_for = normal(mytrkflow[1]):analyse('anh') -- anh stands for anharmonicity
+
+        local nf = my_norm_for
+        py:send({
+                nf:q1{1}, -- qx from the normal form (fractional part)
+                nf:q2{1}, -- qy
+                nf:dq1{1}, -- dqx / d delta
+                nf:dq2{1}, -- dqy / d delta
+                nf:dq1{2}, -- d2 qx / d delta2
+                nf:dq2{2}, -- d2 qy / d delta2
+                nf:anhx{1, 0}, -- dqx / d(2 jx)
+                nf:anhy{0, 1}, -- dqy / d(2 jy)
+                nf:anhx{0, 1}, -- dqx / d(2 jy)
+                nf:anhy{1, 0}, -- dqy / d(2 jx)
+                })
+    ''')
+    mng.send(mng_script_scalar)
+    out_scalar = mng.recv()
+
+    dct_scalar = dict(
+        q1 =   out_scalar[0],
+        q2 =   out_scalar[1],
+        dq1 =  out_scalar[2],
+        dq2 =  out_scalar[3],
+        d2q1 = out_scalar[4],
+        d2q2 = out_scalar[5],
+        dqxdjx = out_scalar[6]*2.,
+        dqydjy = out_scalar[7]*2.,
+        dqxdjy = out_scalar[8]*2.,
+        dqydjx = out_scalar[9]*2.,
+    )
+    for nn in dct_scalar:
+        tw[nn+'_nf_ng'] = dct_scalar[nn]
+
     return tw
 
 xt.Line._tw_ng = _tw_ng
