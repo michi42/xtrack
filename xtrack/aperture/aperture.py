@@ -1772,6 +1772,23 @@ class Aperture:
         return np.unique(s_positions)
 
     @doc_group("Introspection")
+    def get_wrapped_s_interval(self, start: float, end: float) -> list[tuple[float, float]]:
+        """Return an ``s`` interval split at the ring boundary when needed.
+
+        For ring apertures, ``start`` and ``end`` are interpreted modulo the
+        line length. If the interval wraps around the end of the line, the
+        result contains two non-wrapping segments. For non-ring apertures, the
+        interval is returned unchanged.
+        """
+        return _split_wrapped_s_interval(
+            start,
+            end,
+            line_length=float(self.line.get_length()),
+            wrap=self.is_ring,
+            s_tol=self.s_tol,
+        )
+
+    @doc_group("Introspection")
     def get_pipe_table(self):
         """Return installed-pipe interval information as a table.
 
