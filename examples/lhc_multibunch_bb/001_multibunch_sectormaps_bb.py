@@ -95,7 +95,7 @@ print(f'  solve time ({len(slots_b1)}+{len(slots_b2)} bunches, {N_ITER} iters): 
 # Reference the tune shift to each reduced line's own bare tune (on the
 # fractional-tune circle: fast-mode twiss returns fractional tunes)
 tw_red2 = red_b2.twiss()
-dqx_b1 = (mbtw_b1.qx - tw_red.qx + 0.5) % 1.0 - 0.5
+dqx_b1 = C.wrap_frac_tune(mbtw_b1.qx - tw_red.qx)
 print(f"\nB1 tune shift: dqx in [{dqx_b1.min():.2e}, {dqx_b1.max():.2e}]")
 
 # Save per-bunch results of both beams as DataFrames

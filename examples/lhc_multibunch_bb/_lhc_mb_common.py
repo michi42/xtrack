@@ -315,6 +315,13 @@ def solve_self_consistent(line_b1, line_b2, bb_b1, bb_b2,
     return mbtw_b1, mbtw_b2
 
 
+def wrap_frac_tune(v):
+    """Tune difference on the fractional-tune circle, wrapped to (-0.5, 0.5]
+    (fast-mode twiss returns fractional tunes while the bare reference may
+    carry an integer part)."""
+    return (np.asarray(v) + 0.5) % 1.0 - 0.5
+
+
 # ----------------------------------------------------------------------------
 # Results as a DataFrame
 # ----------------------------------------------------------------------------
@@ -331,17 +338,11 @@ def results_dataframe(mbtw, slots, bare_qx, bare_qy, ip='ip1', reverse=False):
     x = np.array([tw['x', marker] for tw in mbtw]) * (-1.0 if reverse else 1.0)
     y = np.array([tw['y', marker] for tw in mbtw])
 
-    def _wrap_frac(v):
-        # tune difference on the fractional-tune circle (fast-mode twiss
-        # returns fractional tunes while the bare reference may carry an
-        # integer part)
-        return (np.asarray(v) + 0.5) % 1.0 - 0.5
-
     df = pd.DataFrame({
         'slot': np.asarray(slots),
         'qx': mbtw.qx, 'qy': mbtw.qy,
-        'dqx': _wrap_frac(mbtw.qx - bare_qx),
-        'dqy': _wrap_frac(mbtw.qy - bare_qy),
+        'dqx': wrap_frac_tune(mbtw.qx - bare_qx),
+        'dqy': wrap_frac_tune(mbtw.qy - bare_qy),
         'x': x, 'y': y,
         'dx': x - x.mean(), 'dy': y - y.mean(),
     }).set_index('slot')
@@ -361,8 +362,10 @@ def plot_results(slots_b1, mbtw_b1, bare_qx, bare_qy, title_suffix=''):
     dco_x = (co_x - co_x.mean()) * 1e6
     dco_y = (co_y - co_y.mean()) * 1e6
     fig, axs = plt.subplots(2, 1, figsize=(9, 7))
-    axs[0].plot(slots_b1, (mbtw_b1.qx - qx0) * 1e3, '.', label=r'$\Delta q_x$')
-    axs[0].plot(slots_b1, (mbtw_b1.qy - qy0) * 1e3, '.', label=r'$\Delta q_y$')
+    axs[0].plot(slots_b1, wrap_frac_tune(mbtw_b1.qx - qx0) * 1e3, '.',
+                label=r'$\Delta q_x$')
+    axs[0].plot(slots_b1, wrap_frac_tune(mbtw_b1.qy - qy0) * 1e3, '.',
+                label=r'$\Delta q_y$')
     axs[0].set_xlabel('25 ns slot')
     axs[0].set_ylabel(r'beam-beam tune shift [$10^{-3}$]')
     axs[0].set_title('LHC injection: per-bunch beam-beam tune shift (B1)'
