@@ -6081,3 +6081,186 @@ def _6d_w_matrix(betx, bety, alfx, alfy, bets, dx, dpx, dy, dpy):
     out[2, 5] = dy
     out[3, 5] = dpy
     return out
+
+
+class MultiBunchTwiss:
+
+    """
+    Container for the per-bunch Twiss results of a multi-bunch beam, as returned
+    by :func:`twiss_line_multibunch`.
+
+    Each bunch of the beam sits at a distinct longitudinal position ``zeta`` and,
+    through a multi-bunch beam-beam element, experiences a different force. As a
+    consequence its closed orbit and linear optics (in particular the tunes)
+    differ from bunch to bunch. This object holds one :class:`TwissTable` per
+    bunch and offers convenient per-bunch access to scalar quantities.
+
+    - ``mbtw[i]`` returns the :class:`TwissTable` of bunch ``i``.
+    - ``mbtw['qx']`` (or any scalar Twiss quantity) returns a numpy array with
+      the value for each bunch.
+    - Scalar quantities are also available as attributes, e.g. ``mbtw.qx``.
+    - ``mbtw.zeta_bunches`` is the array of the bunch longitudinal positions.
+    """
+
+    def __init__(self, bunch_twiss, zeta_bunches, bunch_names=None):
+        self.bunch_twiss = list(bunch_twiss)
+        self.zeta_bunches = np.atleast_1d(np.asarray(zeta_bunches, dtype=float))
+        self.num_bunches = len(self.bunch_twiss)
+        if bunch_names is None:
+            bunch_names = [f'bunch_{i}' for i in range(self.num_bunches)]
+        self.bunch_names = list(bunch_names)
+
+    def __len__(self):
+        return self.num_bunches
+
+    def __iter__(self):
+        return iter(self.bunch_twiss)
+
+    def __getitem__(self, key):
+        if isinstance(key, (int, np.integer)):
+            return self.bunch_twiss[key]
+        if isinstance(key, slice):
+            return self.bunch_twiss[key]
+        # String key -> aggregate the scalar quantity across all bunches
+        return np.array([tw[key] for tw in self.bunch_twiss])
+
+    def __getattr__(self, name):
+        # Only reached if normal attribute lookup fails
+        if name.startswith('_'):
+            raise AttributeError(name)
+        bunch_twiss = self.__dict__.get('bunch_twiss', None)
+        if not bunch_twiss:
+            raise AttributeError(name)
+        try:
+            values = [tw[name] for tw in bunch_twiss]
+        except (KeyError, AttributeError, IndexError):
+            raise AttributeError(name)
+        if all(np.isscalar(v) for v in values):
+            return np.array(values)
+        raise AttributeError(
+            f"'{name}' is not a per-bunch scalar quantity; access it on an "
+            f"individual bunch table, e.g. mbtw[i].{name}")
+
+    def bunch(self, name):
+        """Return the TwissTable of the bunch with the given name."""
+        return self.bunch_twiss[self.bunch_names.index(name)]
+
+    def __repr__(self):
+        return (f'MultiBunchTwiss({self.num_bunches} bunches, '
+                f'zeta={np.array2string(self.zeta_bunches, precision=3)})')
+
+
+def twiss_line_multibunch(line, zeta_bunches=None, particles=None,
+                          method='4d', bunch_names=None, zeta_match_tol=None,
+                          show_progress=True, **kwargs):
+
+    """
+    Compute a closed (periodic) Twiss solution for each bunch of a multi-bunch
+    beam.
+
+    In a multi-bunch beam every bunch occupies a distinct longitudinal position
+    ``zeta`` and, through a multi-bunch beam-beam element (e.g.
+    :class:`xfields.BeamBeamBiGaussianMultibunch2D`), sees a different force.
+    This function fixes ``zeta`` to each bunch position in turn and computes the
+    corresponding periodic solution, so that the per-bunch closed orbit and
+    optics (including the coherent beam-beam tune shift) are obtained.
+
+    The opposing beam is assumed frozen during the computation (as stored in the
+    beam-beam element). For a self-consistent solution of two colliding beams,
+    call this function alternately on each beam, updating the opposing-beam
+    state from the freshly computed per-bunch closed orbits and iterating until
+    convergence.
+
+    Parameters
+    ----------
+    line : Line
+        The beam line (containing the multi-bunch beam-beam element(s)).
+    zeta_bunches : array_like, optional
+        Longitudinal positions of the bunches. Mutually exclusive with
+        ``particles``.
+    particles : xpart.Particles, optional
+        Particles object of the beam in which each active macroparticle is one
+        bunch; the bunch positions are read from its ``zeta``. Mutually
+        exclusive with ``zeta_bunches``.
+    method : {'4d', '6d'}, optional
+        Twiss method. Defaults to ``'4d'`` (``zeta`` is held fixed at each bunch
+        position, which is the relevant regime for the coherent multi-bunch
+        problem).
+    bunch_names : list of str, optional
+        Names for the bunches (used for labelling). Defaults to
+        ``['bunch_0', 'bunch_1', ...]``.
+    zeta_match_tol : float, optional
+        Value to which the ``zeta_match_tol`` of the multi-bunch beam-beam
+        element(s) is temporarily set during the computation, so that the
+        finite-difference probes used to build the one-turn map still match the
+        intended opposing bunch. Defaults to half of the smallest bunch spacing
+        (or a large value for a single bunch). The original value is restored on
+        return.
+    show_progress : bool, optional
+        If True (default), display a ``tqdm`` progress bar over the bunches.
+    **kwargs :
+        Additional keyword arguments forwarded to :func:`twiss_line` /
+        :meth:`Line.twiss` (e.g. ``nemitt_x``, ``chrom``, ...). ``zeta0`` must
+        not be given (it is set internally to each bunch position).
+
+    Returns
+    -------
+    MultiBunchTwiss
+        Container with one :class:`TwissTable` per bunch. See
+        :class:`MultiBunchTwiss`.
+    """
+
+    if 'zeta0' in kwargs:
+        raise ValueError(
+            '`zeta0` cannot be provided to twiss_line_multibunch; it is set '
+            'internally to each bunch position.')
+
+    if (zeta_bunches is None) == (particles is None):
+        raise ValueError(
+            'Provide exactly one of `zeta_bunches` or `particles`.')
+
+    if particles is not None:
+        state = particles._context.nparray_from_context_array(particles.state)
+        mask = state > 0
+        zeta_bunches = particles._context.nparray_from_context_array(
+            particles.zeta)[mask]
+
+    zeta_bunches = np.atleast_1d(np.asarray(zeta_bunches, dtype=float))
+    num_bunches = len(zeta_bunches)
+
+    if num_bunches == 0:
+        raise ValueError('No bunches to twiss.')
+
+    # Determine a safe zeta matching tolerance for the beam-beam element(s), so
+    # that the finite-difference probes of the one-turn map still match the
+    # intended opposing bunch.
+    if zeta_match_tol is None:
+        if num_bunches > 1:
+            min_spacing = np.min(np.diff(np.sort(zeta_bunches)))
+            zeta_match_tol = 0.49 * min_spacing
+        else:
+            zeta_match_tol = 1.0
+
+    # Temporarily widen the matching tolerance of the multi-bunch beam-beam
+    # elements (identified by duck typing).
+    bb_elements = [el for el in line.elements
+                   if hasattr(el, 'zeta_match_tol')
+                   and hasattr(el, 'zeta_offset')
+                   and hasattr(el, 'num_other_bunches')]
+    saved_tols = [el.zeta_match_tol for el in bb_elements]
+    for el in bb_elements:
+        el.zeta_match_tol = zeta_match_tol
+
+    from tqdm.auto import tqdm
+    try:
+        bunch_twiss = []
+        iterator = tqdm(zeta_bunches, desc='twiss_multibunch', unit='bunch',
+                        disable=not show_progress)
+        for zb in iterator:
+            tw = twiss_line(line, method=method, zeta0=float(zb), **kwargs)
+            bunch_twiss.append(tw)
+    finally:
+        for el, tol in zip(bb_elements, saved_tols):
+            el.zeta_match_tol = tol
+
+    return MultiBunchTwiss(bunch_twiss, zeta_bunches, bunch_names=bunch_names)

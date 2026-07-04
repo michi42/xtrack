@@ -24,7 +24,8 @@ from xtrack.twiss import (DEFAULT_MATRIX_RESPONSIVENESS_TOL,
                           DEFAULT_MATRIX_STABILITY_TOL,
                           get_R_matrix,
                           get_T_matrix_line, find_closed_orbit_line,
-                          get_non_linear_chromaticity, twiss_line)
+                          get_non_linear_chromaticity, twiss_line,
+                          twiss_line_multibunch)
 
 from .api_categorization import GroupedAPICollector, doc_group, property_with_doc_group
 from . import beam_elements
@@ -2211,6 +2212,19 @@ class Line:
         return twiss_line(self, **tw_kwargs)
 
     twiss.__doc__ = twiss_line.__doc__
+
+    def twiss_multibunch(self, zeta_bunches=None, particles=None,
+                         method='4d', bunch_names=None, zeta_match_tol=None,
+                         show_progress=True, **kwargs):
+        if not self._has_valid_tracker():
+            self.build_tracker()
+        return twiss_line_multibunch(
+            self, zeta_bunches=zeta_bunches, particles=particles,
+            method=method, bunch_names=bunch_names,
+            zeta_match_tol=zeta_match_tol, show_progress=show_progress,
+            **kwargs)
+
+    twiss_multibunch.__doc__ = twiss_line_multibunch.__doc__
 
     @doc_group("Tracking and Analysis")
     def twiss4d(self, **kwargs):
