@@ -92,10 +92,11 @@ mbtw_b1, mbtw_b2 = C.solve_self_consistent(
 print(f'  solve time ({len(slots_b1)}+{len(slots_b2)} bunches, {N_ITER} iters): '
       f'{time.time() - t0:.1f} s')
 
-# Reference the tune shift to each reduced line's own bare tune
+# Reference the tune shift to each reduced line's own bare tune (on the
+# fractional-tune circle: fast-mode twiss returns fractional tunes)
 tw_red2 = red_b2.twiss()
-print(f"\nB1 tune shift: dqx in [{(mbtw_b1.qx-tw_red.qx).min():.2e}, "
-      f"{(mbtw_b1.qx-tw_red.qx).max():.2e}]")
+dqx_b1 = (mbtw_b1.qx - tw_red.qx + 0.5) % 1.0 - 0.5
+print(f"\nB1 tune shift: dqx in [{dqx_b1.min():.2e}, {dqx_b1.max():.2e}]")
 
 # Save per-bunch results of both beams as DataFrames
 df_b1 = C.results_dataframe(mbtw_b1, slots_b1, tw_red.qx, tw_red.qy,

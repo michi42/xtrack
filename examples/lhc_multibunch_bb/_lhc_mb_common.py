@@ -330,10 +330,18 @@ def results_dataframe(mbtw, slots, bare_qx, bare_qy, ip='ip1', reverse=False):
     marker = marker_name(f'bb_{ip}_ho', reverse)
     x = np.array([tw['x', marker] for tw in mbtw]) * (-1.0 if reverse else 1.0)
     y = np.array([tw['y', marker] for tw in mbtw])
+
+    def _wrap_frac(v):
+        # tune difference on the fractional-tune circle (fast-mode twiss
+        # returns fractional tunes while the bare reference may carry an
+        # integer part)
+        return (np.asarray(v) + 0.5) % 1.0 - 0.5
+
     df = pd.DataFrame({
         'slot': np.asarray(slots),
         'qx': mbtw.qx, 'qy': mbtw.qy,
-        'dqx': mbtw.qx - bare_qx, 'dqy': mbtw.qy - bare_qy,
+        'dqx': _wrap_frac(mbtw.qx - bare_qx),
+        'dqy': _wrap_frac(mbtw.qy - bare_qy),
         'x': x, 'y': y,
         'dx': x - x.mean(), 'dy': y - y.mean(),
     }).set_index('slot')
