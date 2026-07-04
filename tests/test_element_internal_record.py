@@ -3,6 +3,8 @@
 # Copyright (c) CERN, 2021.                 #
 # ######################################### #
 
+import pathlib
+
 import numpy as np
 import json
 
@@ -11,6 +13,8 @@ import xpart as xp
 import xobjects as xo
 from xobjects.test_helpers import (
     allow_no_prebuilt_kernels, for_all_test_contexts)
+
+TEST_DATA_FOLDER = pathlib.Path(__file__).parent / '../../xtrack/test_data'
 
 
 @for_all_test_contexts
@@ -265,7 +269,7 @@ def test_record_with_twiss(test_context):
     n_kicks0 = 5
     n_kicks1 = 3
 
-    path_line_particles = xt._pkg_root.parent / 'test_data' / 'hllhc15_noerrors_nobb/line_and_particle.json'
+    path_line_particles = TEST_DATA_FOLDER / 'hllhc15_noerrors_nobb/line_and_particle.json'
 
     with open(path_line_particles, 'r') as fid:
         input_data = json.load(fid)
