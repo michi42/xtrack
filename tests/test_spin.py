@@ -12,7 +12,7 @@ from scipy.interpolate import interp1d
 
 
 # Run the scripts in the following folder to regenerate the reference files
-BMAD_REF_FILES = Path(xt.__file__).parent / '../test_data/spin_refs_bmad'
+BMAD_REF_FILES = Path(__file__).parent / '../test_data/spin_refs_bmad'
 
 COMMON_TEST_CASES = [
     {
