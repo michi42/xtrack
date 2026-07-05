@@ -55,8 +55,12 @@ bb_b1 = C.install_bb(line_b1, False, geom, len(slots_b2), gamma0, beta0)
 bb_b2 = C.install_bb(line_b2, True, geom, len(slots_b1), gamma0, beta0)
 
 print('Self-consistent solve on the full thick lattice:')
+import time
+t0 = time.time()
 mbtw_b1, mbtw_b2 = C.solve_self_consistent(
     line_b1, line_b2, bb_b1, bb_b2, slots_b1, slots_b2, geom, n_iter=N_ITER)
+print(f'  solve time ({len(slots_b1)}+{len(slots_b2)} bunches, {N_ITER} iters): '
+      f'{time.time() - t0:.1f} s')
 
 print(f"\nB1 tune shift: dqx in [{(mbtw_b1.qx-meta['bare_qx_b1']).min():.2e}, "
       f"{(mbtw_b1.qx-meta['bare_qx_b1']).max():.2e}]")

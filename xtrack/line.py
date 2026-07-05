@@ -2214,15 +2214,14 @@ class Line:
     twiss.__doc__ = twiss_line.__doc__
 
     def twiss_multibunch(self, zeta_bunches=None, particles=None,
-                         method='4d', bunch_names=None, zeta_match_tol=None,
+                         method='4d', bunch_names=None,
                          show_progress=True, mode='fast', **kwargs):
         if not self._has_valid_tracker():
             self.build_tracker()
         return twiss_line_multibunch(
             self, zeta_bunches=zeta_bunches, particles=particles,
             method=method, bunch_names=bunch_names,
-            zeta_match_tol=zeta_match_tol, show_progress=show_progress,
-            mode=mode, **kwargs)
+            show_progress=show_progress, mode=mode, **kwargs)
 
     twiss_multibunch.__doc__ = twiss_line_multibunch.__doc__
 
