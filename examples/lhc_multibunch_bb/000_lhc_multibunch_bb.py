@@ -15,24 +15,18 @@ separation) which follows pytrain / TRAIN.
 At nominal injection the separation bumps are kept ON, so the beams do not
 collide head-on: the effect is long-range beam-beam (BBLR) only.
 
-This "direct" variant twisses the full thick line once per bunch. That is exact
-but slow, so it runs on a bounded subset of the filling scheme (a reference
-window plus its collision partners at the other IPs). The companion example
-``001_multibunch_sectormaps_bb.py`` replaces the arcs by second-order maps, which
-makes the twiss fast enough to run all bunches.
-
-Runtime is dominated by compiling the large thick tracking kernel (a few
-minutes); the per-encounter geometry (twiss + survey) is cached to
-``_lhc_bb_geometry.json`` after the first run.
+This "direct" variant twisses the full thick line once per bunch. The companion example
+``001_multibunch_sectormaps_bb.py`` replaces the arcs by second-order maps.
 """
+import os
 
-import numpy as np
 import matplotlib.pyplot as plt
 
 import _lhc_mb_common as C
 
-WINDOW = 16   # bunches per populated window (subset; direct twiss is slow)
-N_ITER = 3
+N_ITER = int(os.environ.get('LHC_NITER', '3'))
+ALL_BUNCHES = os.environ.get('LHC_ALL', '1') == '1'  # False -> bounded subset
+WINDOW = int(os.environ.get('LHC_WINDOW', '48'))
 
 # ----------------------------------------------------------------------------
 env, line_b1, line_b2 = C.load_lhc()
@@ -50,7 +44,10 @@ for ip in C.IPS:
 
 # Filling: bounded subset with all-IP pairings
 scheme_b1, scheme_b2 = C.load_scheme()
-slots_b1, slots_b2 = C.windowed_slots(scheme_b1, scheme_b2, geom, WINDOW)
+if ALL_BUNCHES:
+    slots_b1, slots_b2 = C.all_filled_slots(scheme_b1, scheme_b2)
+else:
+    slots_b1, slots_b2 = C.windowed_slots(scheme_b1, scheme_b2, geom, WINDOW)
 print(f'  populated bunches: B1 = {len(slots_b1)}, B2 = {len(slots_b2)}')
 
 # Install beam-beam elements in the full lines
@@ -63,6 +60,16 @@ mbtw_b1, mbtw_b2 = C.solve_self_consistent(
 
 print(f"\nB1 tune shift: dqx in [{(mbtw_b1.qx-meta['bare_qx_b1']).min():.2e}, "
       f"{(mbtw_b1.qx-meta['bare_qx_b1']).max():.2e}]")
+
+df_b1 = C.results_dataframe(mbtw_b1, slots_b1, meta['bare_qx_b1'], meta['bare_qy_b1'],
+                            ip='ip1', reverse=False)
+df_b2 = C.results_dataframe(mbtw_b2, slots_b2, meta['bare_qx_b2'], meta['bare_qy_b2'],
+                            ip='ip1', reverse=True)
+out_b1 = os.path.join(C.HERE, 'results_b1_full.pkl')
+out_b2 = os.path.join(C.HERE, 'results_b2_full.pkl')
+df_b1.to_pickle(out_b1)
+df_b2.to_pickle(out_b2)
+print(f'saved {out_b1}\nsaved {out_b2}')
 
 C.plot_results(slots_b1, mbtw_b1, meta['bare_qx_b1'], meta['bare_qy_b1'],
                title_suffix='  [full lattice]')

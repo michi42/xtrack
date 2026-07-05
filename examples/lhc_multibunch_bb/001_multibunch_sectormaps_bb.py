@@ -15,18 +15,11 @@ encounters is replaced by second-order Taylor maps:
 
 The beam-beam elements stay EXACT; only the arcs are approximated (to second
 order, as in pytrain's sector maps). The reduced line has ~a few hundred
-elements instead of ~13000, so each per-bunch twiss is orders of magnitude
-faster -- fast enough to solve ALL bunches of the filling scheme.
-
-The script prints a timing comparison of one full-lattice twiss vs one
-reduced-line twiss. The same CpuContext is used throughout (via the single
-environment), so the small reduced-line kernel is compiled once and reused for
-both beams and every per-bunch twiss.
+elements instead of ~13000.
 """
 
 import os
 import time
-import numpy as np
 import matplotlib.pyplot as plt
 
 import _lhc_mb_common as C

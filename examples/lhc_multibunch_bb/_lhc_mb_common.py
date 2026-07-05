@@ -54,7 +54,7 @@ IPS = [int(v) for v in os.environ.get('LHC_IPS', '1,2,5,8').split(',')]
 NPARASITIC = int(os.environ.get('LHC_NPAR', '45'))  # LR encounters per IP side
 N_SLOTS = 3564
 
-ZETA_PER_SLOT = 1e-3        # abstract per-bunch zeta label spacing [m]
+ZETA_PER_SLOT = 25e-9 * 2.99792458e8    # abstract per-bunch zeta label spacing [m]
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 DATA = os.path.join(HERE, '..', '..', 'test_data', 'lhc_2024')
@@ -93,11 +93,8 @@ def load_lhc():
     The nominal injection optics are used as-is: the separation bumps are kept ON
     (as at real injection), so the beams are separated at the IPs and DO NOT
     collide head-on. The beam-beam effect is then long-range only (BBLR), which
-    is what this study targets. The head-on elements are still installed but see
-    the full IP separation and contribute negligibly.
-
-    All lines share the environment's single context, so the tracking kernel is
-    compiled once per distinct line structure and reused."""
+    is what this study targets. The head-on elements are still installed but act
+    as "long-range" at the full IP separation."""
     with open(os.path.join(DATA, 'lhc.seq')) as fid:
         seq_text = fid.read().replace(' at=', 'at:=')
     env = xt.load(string=seq_text, format='madx', reverse_lines=['lhcb2'])
