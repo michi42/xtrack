@@ -97,9 +97,9 @@ mk_b1 = mb.marker_name('bb_ip1_ho', False)
 def extract(mbtw):
     return dict(
         qx=np.asarray(mbtw.qx_frac), qy=np.asarray(mbtw.qy_frac),
-        x=np.array([tw['x', mk_b1] for tw in mbtw]),
-        betx=np.array([tw['betx', mk_b1] for tw in mbtw]),
-        bety=np.array([tw['bety', mk_b1] for tw in mbtw]),
+        x=mbtw['x', mk_b1],
+        betx=mbtw['betx', mk_b1],
+        bety=mbtw['bety', mk_b1],
     )
 
 

@@ -326,14 +326,12 @@ class LHCMultibunchBB:
         sigma_other^2 + sigma_own^2``. Returns (sigma_x, sigma_y), each of
         shape (n_other, n_encounters)."""
         eg = self.nemitt / gamma0    # same convention as the static case
-        sig_oth_x = np.sqrt(np.array(
-            [tw.rows[marker_names_other].betx for tw in mbtw_other]) * eg)
-        sig_oth_y = np.sqrt(np.array(
-            [tw.rows[marker_names_other].bety for tw in mbtw_other]) * eg)
-        sig_own_x = np.sqrt(np.array(
-            [tw.rows[marker_names_own].betx for tw in mbtw_own]) * eg)
-        sig_own_y = np.sqrt(np.array(
-            [tw.rows[marker_names_own].bety for tw in mbtw_own]) * eg)
+        # mbtw['betx', names] resolves the marker rows once and slices the
+        # numpy columns of all bunch tables (fast multi-element access)
+        sig_oth_x = np.sqrt(mbtw_other['betx', marker_names_other] * eg)
+        sig_oth_y = np.sqrt(mbtw_other['bety', marker_names_other] * eg)
+        sig_own_x = np.sqrt(mbtw_own['betx', marker_names_own] * eg)
+        sig_own_y = np.sqrt(mbtw_own['bety', marker_names_own] * eg)
         slot_to_idx = {int(ss): ii for ii, ss in enumerate(slots_own)}
         slots_other = np.asarray(slots_other)
         sigma_x = np.empty_like(sig_oth_x)
@@ -367,8 +365,10 @@ class LHCMultibunchBB:
         co + sep), and accounting for the beam-2 line x-flip, the survey
         separation enters as ``-sep_x`` in x for BOTH beams, and as ``-sep_y``
         (beam 1) / ``+sep_y`` (beam 2) in y (``sep_y`` is ~0 for the LHC)."""
-        xs = -np.array([tw.rows[marker_names_other].x for tw in mbtw_other])
-        ys = np.array([tw.rows[marker_names_other].y for tw in mbtw_other])
+        # mbtw['x', names] resolves the marker rows once and slices the
+        # numpy columns of all bunch tables (fast multi-element access)
+        xs = -mbtw_other['x', marker_names_other]
+        ys = mbtw_other['y', marker_names_other]
         zeta_other = np.array(slots_other) * self.ZETA_PER_SLOT
         # NOTE: encounter slot offsets are stored mod N_SLOTS (a left LR at
         # -n is stored as N_SLOTS-n; the IP2/IP8 pairings wrap around the
@@ -376,11 +376,14 @@ class LHCMultibunchBB:
         # `zeta_period` (set in install_bb), which makes the pairing periodic
         # in the bunch-label axis.
         y_sep_sign = 1.0 if target_is_b2 else -1.0
+        # one reusable Particles object (same zeta/weight for all encounters)
+        p = xt.Particles(p0c=self.p0c, mass0=xt.PROTON_MASS_EV, q0=1.0,
+                         x=np.zeros(len(zeta_other)),
+                         y=np.zeros(len(zeta_other)),
+                         zeta=zeta_other, weight=self.bunch_intensity)
         for j, name in enumerate(self.enc_names):
-            p = xt.Particles(p0c=self.p0c, mass0=xt.PROTON_MASS_EV, q0=1.0,
-                             x=xs[:, j] - geom[name]['sep_x'],
-                             y=ys[:, j] + y_sep_sign * geom[name]['sep_y'],
-                             zeta=zeta_other, weight=self.bunch_intensity)
+            p.x[:] = xs[:, j] - geom[name]['sep_x']
+            p.y[:] = ys[:, j] + y_sep_sign * geom[name]['sep_y']
             kw = {}
             if sigmas is not None:
                 kw = dict(sigma_x=sigmas[0][:, j], sigma_y=sigmas[1][:, j])
@@ -466,8 +469,8 @@ def results_dataframe(mbtw, slots, bare_qx, bare_qy, ip='ip1', reverse=False):
     """
     import pandas as pd
     marker = marker_name(f'bb_{ip}_ho', reverse)
-    x = np.array([tw['x', marker] for tw in mbtw]) * (-1.0 if reverse else 1.0)
-    y = np.array([tw['y', marker] for tw in mbtw])
+    x = mbtw['x', marker] * (-1.0 if reverse else 1.0)
+    y = mbtw['y', marker]
 
     df = pd.DataFrame({
         'slot': np.asarray(slots),
@@ -486,8 +489,8 @@ def results_dataframe(mbtw, slots, bare_qx, bare_qy, ip='ip1', reverse=False):
 def plot_results(slots_b1, mbtw_b1, bare_qx, bare_qy, title_suffix=''):
     import matplotlib.pyplot as plt
     qx0, qy0 = bare_qx, bare_qy
-    co_x = np.array([tw['x', marker_name('bb_ip1_ho', False)] for tw in mbtw_b1])
-    co_y = np.array([tw['y', marker_name('bb_ip1_ho', False)] for tw in mbtw_b1])
+    co_x = mbtw_b1['x', marker_name('bb_ip1_ho', False)]
+    co_y = mbtw_b1['y', marker_name('bb_ip1_ho', False)]
     # per-bunch orbit deviation from the bunch-averaged orbit (removes the common
     # crossing/separation-bump orbit, leaving the bunch-by-bunch beam-beam part)
     dco_x = (co_x - co_x.mean()) * 1e6
@@ -521,7 +524,7 @@ def plot_global_quantities(slots_b1, mbtw_b1, slots_b2, mbtw_b2):
           True: marker_name('bb_ip1_ho', True)}
 
     def at_ip1(mbtw, col, mirror):
-        return np.array([tw[col, mk[mirror]] for tw in mbtw])
+        return mbtw[col, mk[mirror]]
 
     fig, axs = plt.subplots(3, 2, figsize=(13, 10), sharex=True)
 

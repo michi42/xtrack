@@ -6097,7 +6097,14 @@ class MultiBunchTwiss:
 
     - ``mbtw[i]`` returns the :class:`TwissTable` of bunch ``i``.
     - ``mbtw['qx']`` (or any scalar Twiss quantity) returns a numpy array with
-      the value for each bunch.
+      the value for each bunch; for a column quantity (e.g. ``mbtw['x']``)
+      the full per-bunch columns are stacked into an (n_bunches, n_rows)
+      array.
+    - ``mbtw['x', 'ip1']`` / ``mbtw['x', list_of_names]`` return the column
+      values at the given element(s) for every bunch, shape (n_bunches,) /
+      (n_bunches, n_names). The row positions are resolved once (all bunch
+      tables share the same row order), so this is the FAST way to extract
+      per-bunch values at many elements.
     - Scalar quantities are also available as attributes, e.g. ``mbtw.qx``.
     - ``mbtw.zeta_bunches`` is the array of the bunch longitudinal positions.
     """
@@ -6109,6 +6116,7 @@ class MultiBunchTwiss:
         if bunch_names is None:
             bunch_names = [f'bunch_{i}' for i in range(self.num_bunches)]
         self.bunch_names = list(bunch_names)
+        self._name_pos = None      # lazy {element name: row index}
 
     def __len__(self):
         return self.num_bunches
@@ -6116,30 +6124,37 @@ class MultiBunchTwiss:
     def __iter__(self):
         return iter(self.bunch_twiss)
 
+    def rows_index(self, names):
+        """Row index (or index array) of the given element name(s), shared by
+        all bunch tables."""
+        if self._name_pos is None:
+            self._name_pos = {nn: ii for ii, nn in
+                              enumerate(self.bunch_twiss[0].name)}
+        if isinstance(names, str):
+            return self._name_pos[names]
+        return np.array([self._name_pos[nn] for nn in names])
+
     def __getitem__(self, key):
-        if isinstance(key, (int, np.integer)):
+        if isinstance(key, (int, np.integer, slice)):
             return self.bunch_twiss[key]
-        if isinstance(key, slice):
-            return self.bunch_twiss[key]
-        # String key -> aggregate the scalar quantity across all bunches
+        if isinstance(key, tuple):
+            col, names = key
+            idx = self.rows_index(names)
+            return np.array([tw[col][idx] for tw in self.bunch_twiss])
         return np.array([tw[key] for tw in self.bunch_twiss])
 
     def __getattr__(self, name):
-        # Only reached if normal attribute lookup fails
         if name.startswith('_'):
             raise AttributeError(name)
-        bunch_twiss = self.__dict__.get('bunch_twiss', None)
-        if not bunch_twiss:
-            raise AttributeError(name)
         try:
-            values = [tw[name] for tw in bunch_twiss]
-        except (KeyError, AttributeError, IndexError):
+            values = [tw[name] for tw in self.bunch_twiss]
+        except (KeyError, NameError):   # Table evals unknown string keys
             raise AttributeError(name)
-        if all(np.isscalar(v) for v in values):
+        if np.isscalar(values[0]):
             return np.array(values)
         raise AttributeError(
-            f"'{name}' is not a per-bunch scalar quantity; access it on an "
-            f"individual bunch table, e.g. mbtw[i].{name}")
+            f"'{name}' is not a per-bunch scalar quantity; use "
+            f"mbtw['{name}'] or mbtw['{name}', element_names]")
 
     def bunch(self, name):
         """Return the TwissTable of the bunch with the given name."""

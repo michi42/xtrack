@@ -191,14 +191,17 @@ def _update_opposing(bb_dict, mbtw_other, zeta_other, marker_names_other,
     beam-beam elements. Between the two (opposite-parity) beam lines x flips
     and y does not; matching TRAIN, the survey separation enters as -sep_x in
     x for both beams and -/+sep_y in y for beam 1/2."""
-    xs = -np.array([tw.rows[marker_names_other].x for tw in mbtw_other])
-    ys = np.array([tw.rows[marker_names_other].y for tw in mbtw_other])
+    # mbtw['x', names] resolves the marker rows once and slices the numpy
+    # columns of all bunch tables (fast multi-element access)
+    xs = -mbtw_other['x', marker_names_other]
+    ys = mbtw_other['y', marker_names_other]
     y_sep_sign = 1.0 if target_is_b2 else -1.0
+    p = xt.Particles(p0c=p0c, mass0=xt.PROTON_MASS_EV, q0=1.0,
+                     x=np.zeros(len(zeta_other)), y=np.zeros(len(zeta_other)),
+                     zeta=zeta_other, weight=bunch_intensity)
     for j, name in enumerate(ENC_NAMES):
-        p = xt.Particles(p0c=p0c, mass0=xt.PROTON_MASS_EV, q0=1.0,
-                         x=xs[:, j] - geom[name]['sep_x'],
-                         y=ys[:, j] + y_sep_sign * geom[name]['sep_y'],
-                         zeta=zeta_other, weight=bunch_intensity)
+        p.x[:] = xs[:, j] - geom[name]['sep_x']
+        p.y[:] = ys[:, j] + y_sep_sign * geom[name]['sep_y']
         bb_dict[name].update_from_other_beam(p)
 
 
@@ -253,10 +256,10 @@ def _run_xsuite_scenario(scenario):
 
     def extract(mbtw, slots, bare_qx, bare_qy, mirror):
         marker = _marker_name('bb_ip1_ho', mirror)
-        x = np.array([tw['x', marker] for tw in mbtw])
+        x = mbtw['x', marker]
         if mirror:
             x = -x   # reversed beam-2 line -> physical frame
-        y = np.array([tw['y', marker] for tw in mbtw])
+        y = mbtw['y', marker]
         return dict(slots=slots,
                     dx=x - x.mean(), dy=y - y.mean(),
                     dqx=_wrap_frac_tune(mbtw.qx - bare_qx),
