@@ -1,6 +1,7 @@
 import xtrack as xt
 import xpart as xp
 import numpy as np
+import xobjects as xo
 
 np.random.seed(12345)
 
@@ -32,39 +33,47 @@ z_separatrix = np.linspace(rfb.z_left, rfb.z_right, 1000)
 delta_separatrix = rfb.separatrix(z_separatrix)
 delta_separatrix_neg = rfb.separatrix(z_separatrix, sgn=-1)
 
-np.testing.assert_allclose(rfb.zeta0, tw.zeta[0], rtol=0, atol=1e-12)
-np.testing.assert_allclose(rfb.dp0, tw.delta[0], rtol=0, atol=1e-12)
-np.testing.assert_allclose(rfb.z_sfp, tw.zeta[0], rtol=0, atol=1e-9)
-np.testing.assert_allclose(rfb.z_left + rfb.z_right, 2 * rfb.zeta0,
-                           rtol=0, atol=1e-12)
+xo.assert_allclose(rfb.zeta0, tw.zeta[0], rtol=0, atol=1e-12)
+xo.assert_allclose(rfb.dp0, tw.delta[0], rtol=0, atol=1e-12)
+xo.assert_allclose(rfb.z_sfp, tw.zeta[0], rtol=0, atol=1e-9)
 
-np.testing.assert_allclose(
+# For this stationary single-RF bucket, the bucket is centered at zeta0.
+xo.assert_allclose(rfb.z_left + rfb.z_right, 2 * rfb.zeta0,
+                   rtol=0, atol=1e-12)
+
+# The stable fixed point Hamiltonian must be evaluated at the shifted
+# momentum coordinate dp0.
+xo.assert_allclose(
     rfb.h_sfp(),
     rfb.hamiltonian(rfb.z_sfp, rfb.dp0),
     rtol=0,
     atol=1e-12,
 )
 
-np.testing.assert_allclose(
+# The upper and lower separatrix branches are symmetric around dp0.
+xo.assert_allclose(
     (delta_separatrix + delta_separatrix_neg) / 2,
     rfb.dp0,
     rtol=0,
     atol=1e-14,
 )
-np.testing.assert_allclose(delta_separatrix[[0, -1]], rfb.dp0,
-                           rtol=0, atol=1e-12)
-np.testing.assert_allclose(delta_separatrix_neg[[0, -1]], rfb.dp0,
-                           rtol=0, atol=1e-12)
+xo.assert_allclose(delta_separatrix[[0, -1]], rfb.dp0,
+                   rtol=0, atol=1e-12)
+xo.assert_allclose(delta_separatrix_neg[[0, -1]], rfb.dp0,
+                   rtol=0, atol=1e-12)
 
 assert rfb.is_in_separatrix(tw.zeta[0], tw.delta[0])
 assert np.all(rfb.is_in_separatrix(np.array(p.zeta), np.array(p.delta)))
 
-np.testing.assert_allclose(np.mean(p.zeta), tw.zeta[0], rtol=0, atol=2e-3)
-np.testing.assert_allclose(np.std(p.zeta), sigma_z, rtol=2e-2, atol=0)
-np.testing.assert_allclose(np.mean(p.delta), tw.delta[0], rtol=0, atol=2e-5)
+xo.assert_allclose(np.mean(p.zeta), tw.zeta[0], rtol=0, atol=2e-3)
+xo.assert_allclose(np.std(p.zeta), sigma_z, rtol=2e-2, atol=0)
+xo.assert_allclose(np.mean(p.delta), tw.delta[0], rtol=0, atol=2e-5)
 
 z_probe = rfb.zeta0 + np.array([-0.25, 0, 0.25]) * (rfb.z_right - rfb.z_left)
 delta_probe_sep = rfb.separatrix(z_probe)
+
+# Launch three probe particles just inside the separatrix and three just
+# outside it, at the same zeta coordinates.
 delta_probe_inside = rfb.dp0 + 0.9 * (delta_probe_sep - rfb.dp0)
 delta_probe_outside = rfb.dp0 + 1.1 * (delta_probe_sep - rfb.dp0)
 z_probe_all = np.r_[z_probe, z_probe]
@@ -90,6 +99,8 @@ outside_is_accepted = rfb.is_in_separatrix(
     np.array(mon.delta[3:, :]),
 )
 
+# The particles launched inside stay in the bucket, while the particles
+# launched outside drift away instead of being captured.
 assert np.all(inside_is_accepted)
 assert not np.any(outside_is_accepted)
 assert np.all(np.ptp(np.array(mon.zeta[:3, :]), axis=1)
