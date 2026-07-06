@@ -22,6 +22,10 @@ This script solves the same machine twice:
    beams (requires the optics-carrying mode='fast' twiss in the loop).
 
 and compares per-bunch tunes, orbits and beta* at IP1.
+
+By default the MULTI-THREADED CPU kernels (OpenMP) are used (set
+``LHC_OMP=0`` for serial, ``LHC_OMP=<n>`` for a specific thread count; see
+``005_multibunch_openmp.py`` for the speed-up measurement).
 """
 
 import os
@@ -29,9 +33,14 @@ import time
 import numpy as np
 import matplotlib.pyplot as plt
 
+import xobjects as xo
 import lhc_mb_common as mb
 
-sim = mb.LHCMultibunchBB.collision()
+# multi-threaded CPU kernels by default in this demo
+omp = os.environ.get('LHC_OMP', 'auto')
+sim = mb.LHCMultibunchBB.collision(context=(
+    xo.ContextCpu() if omp == 'serial'
+    else xo.ContextCpu(omp_num_threads='auto' if omp == 'auto' else int(omp))))
 
 N_ITER = int(os.environ.get('LHC_NITER', '3'))
 
@@ -53,6 +62,7 @@ red_b1 = line_b1.get_line_with_second_order_maps(split_at=sim.marker_names_b1)
 red_b2 = line_b2.get_line_with_second_order_maps(split_at=sim.marker_names_b2)
 for rl in (red_b1, red_b2):
     rl.twiss_default['method'] = '4d'
+    rl.build_tracker(_context=sim.context)
 tw_red = red_b1.twiss()
 tw_red2 = red_b2.twiss()
 
@@ -87,11 +97,11 @@ for label, dynamic_beta in (('static', False), ('dynamic beta', True)):
     reset_bb()
     print(f'Self-consistent solve ({label}):')
     t0 = time.time()
-    # mode='fast' in both runs (dynamic_beta forces it anyway) so the
+    # twiss_mode='fast' in both runs (dynamic_beta forces it anyway) so the
     # returned tables carry the per-bunch optics and the cost is comparable
     mbtw_b1, mbtw_b2 = sim.solve_self_consistent(
         red_b1, red_b2, bb_b1, bb_b2, slots_b1, slots_b2, geom,
-        n_iter=N_ITER, dynamic_beta=dynamic_beta)
+        n_iter=N_ITER, twiss_mode='fast', dynamic_beta=dynamic_beta)
     print(f'  solve time ({N_ITER} iters): {time.time() - t0:.1f} s')
     results[label] = (mbtw_b1, mbtw_b2)
 

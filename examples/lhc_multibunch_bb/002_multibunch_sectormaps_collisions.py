@@ -52,6 +52,7 @@ red_b1 = line_b1.get_line_with_second_order_maps(split_at=sim.marker_names_b1)
 red_b2 = line_b2.get_line_with_second_order_maps(split_at=sim.marker_names_b2)
 for rl in (red_b1, red_b2):
     rl.twiss_default['method'] = '4d'
+    rl.build_tracker(_context=sim.context)
 tw_red = red_b1.twiss()
 tw_red2 = red_b2.twiss()
 

@@ -47,6 +47,7 @@ import numpy as np
 from scipy.constants import c as clight
 
 
+import xobjects as xo
 import xtrack as xt
 import xfields as xf
 
@@ -77,13 +78,26 @@ class LHCMultibunchBB:
 
     ``ips`` / ``nparasitic`` default from the environment variables
     ``LHC_IPS`` / ``LHC_NPAR`` (falling back to 1,2,5,8 / 45).
+
+    ``context`` selects the CPU context for all trackers and beam-beam
+    elements; default from the environment variable ``LHC_OMP`` (unset/``0``
+    -> serial; a thread count or ``auto`` -> multi-threaded OpenMP kernels,
+    e.g. ``LHC_OMP=auto``). Prebuilt kernels exist for both flavours.
     """
 
     N_SLOTS = 3564
     ZETA_PER_SLOT = 25e-9 * clight   # per-bunch zeta spacing [m]
 
     def __init__(self, p0c, bunch_intensity, nemitt, optics_file,
-                 ips=None, nparasitic=None):
+                 ips=None, nparasitic=None, context=None):
+        if context is None:
+            omp = os.environ.get('LHC_OMP', '0')
+            if omp in ('0', '', 'serial'):
+                context = xo.ContextCpu()
+            else:
+                context = xo.ContextCpu(
+                    omp_num_threads=('auto' if omp == 'auto' else int(omp)))
+        self.context = context
         if ips is None:
             ips = [int(v) for v in
                    os.environ.get('LHC_IPS', '1,2,5,8').split(',')]
@@ -156,6 +170,7 @@ class LHCMultibunchBB:
             ln.twiss_default['method'] = '4d'
             # no IP at the s=0 boundary (IP1 is at s=0 otherwise)
             ln.cycle(name_first_element='ip3', inplace=True)
+            ln.build_tracker(_context=self.context)
         return env, env.lhcb1, env.lhcb2
 
     def install_markers(self, line, mirror, b_h_dist):
@@ -373,7 +388,7 @@ class LHCMultibunchBB:
 
     def solve_self_consistent(self, line_b1, line_b2, bb_b1, bb_b2,
                               slots_b1, slots_b2, geom, n_iter=3, chrom=False,
-                              mode='fast_orbit', show_progress=True,
+                              twiss_mode='fast_orbit', show_progress=True,
                               dynamic_beta=False):
         """Iterate twiss_multibunch on both beams, feeding each beam's
         per-bunch closed orbit into the other beam's elements. Returns
@@ -381,25 +396,25 @@ class LHCMultibunchBB:
 
         The iteration only feeds back orbits, so by default the orbit-only
         fast twiss is used (roughly half the cost of the optics-carrying
-        default); pass ``mode='fast'`` to get optics in the returned tables.
+        default); pass ``twiss_mode='fast'`` to get optics in the returned tables.
 
         With ``dynamic_beta=True`` the per-bunch effective (convolved) sizes
         of every encounter are recomputed at each iteration from the LIVE
         per-bunch beta functions of both beams (dynamic beta) instead of
         staying at their static values. This requires the optics-carrying
         twiss, so mode='fast' is forced."""
-        if dynamic_beta:
-            mode = 'fast'
+        if dynamic_beta and twiss_mode == 'fast_orbit':
+            twiss_mode = 'fast'
         gamma0 = line_b1.particle_ref.gamma0[0]
         zeta_b1 = np.array(slots_b1) * self.ZETA_PER_SLOT
         zeta_b2 = np.array(slots_b2) * self.ZETA_PER_SLOT
         mbtw_b1 = mbtw_b2 = None
         for it in range(n_iter):
             mbtw_b1 = line_b1.twiss_multibunch(
-                zeta_bunches=zeta_b1, chrom=chrom, mode=mode,
+                zeta_bunches=zeta_b1, chrom=chrom, mode=twiss_mode,
                 show_progress=show_progress)
             mbtw_b2 = line_b2.twiss_multibunch(
-                zeta_bunches=zeta_b2, chrom=chrom, mode=mode,
+                zeta_bunches=zeta_b2, chrom=chrom, mode=twiss_mode,
                 show_progress=show_progress)
             sig_b1 = sig_b2 = None
             if dynamic_beta:
