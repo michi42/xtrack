@@ -73,28 +73,11 @@ print(f'  populated bunches: B1 = {len(slots_b1)}, B2 = {len(slots_b2)}')
 bb_b1 = sim.install_bb(red_b1, False, geom, len(slots_b2), gamma0, beta0)
 bb_b2 = sim.install_bb(red_b2, True, geom, len(slots_b1), gamma0, beta0)
 
-
-def reset_bb():
-    """Forget the opposing-beam state (fresh solve) and restore the static
-    sizes. (Sizes set through the element method: the line[] View does not
-    support slice assignment on array fields.)"""
-    for bb_dict, mirror in ((bb_b1, False), (bb_b2, True)):
-        for name, bb in bb_dict.items():
-            bb.num_other_bunches = 0
-            e = geom[name]
-            n_cap = len(bb.other_beam_zeta)
-            bb._set_per_bunch('other_beam_sigma_x',
-                              np.sqrt(e['betx'] * sim.nemitt / gamma0), n_cap)
-            bb._set_per_bunch('other_beam_sigma_y',
-                              np.sqrt(e['bety'] * sim.nemitt / gamma0), n_cap)
-
-
 # ----------------------------------------------------------------------------
 # Solve with static sizes, then with dynamic beta
 # ----------------------------------------------------------------------------
 results = {}
 for label, dynamic_beta in (('static', False), ('dynamic beta', True)):
-    reset_bb()
     print(f'Self-consistent solve ({label}):')
     t0 = time.time()
     # twiss_mode='fast' in both runs (dynamic_beta forces it anyway) so the
