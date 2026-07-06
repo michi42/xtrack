@@ -121,12 +121,22 @@ plt.figure(2)
 plt.plot(z_separatrix, delta_separatrix, color='k', linewidth=1.5)
 plt.plot(z_separatrix, delta_separatrix_neg, color='k', linewidth=1.5)
 for ii in range(3):
-    plt.plot(mon.zeta[ii, :], mon.delta[ii, :], color='C0', linewidth=1)
-    plt.plot(mon.zeta[ii + 3, :], mon.delta[ii + 3, :], color='C3',
+    mask_inside = mon.state[ii, :] >= 1
+    mask_outside = mon.state[ii + 3, :] >= 1
+    plt.plot(mon.zeta[ii, mask_inside], mon.delta[ii, mask_inside],
+             color='C0', linewidth=1)
+    plt.plot(mon.zeta[ii + 3, mask_outside],
+             mon.delta[ii + 3, mask_outside], color='C3',
              linewidth=1)
 plt.plot(z_probe_all[:3], delta_probe_all[:3], 'o', color='C0')
 plt.plot(z_probe_all[3:], delta_probe_all[3:], 'o', color='C3')
 plt.plot(tw.zeta[0], tw.delta[0], 'x', color='k')
+z_margin = 0.15 * (rfb.z_right - rfb.z_left)
+delta_sep_min = min(np.min(delta_separatrix), np.min(delta_separatrix_neg))
+delta_sep_max = max(np.max(delta_separatrix), np.max(delta_separatrix_neg))
+delta_margin = 0.15 * (delta_sep_max - delta_sep_min)
+plt.xlim(rfb.z_left - z_margin, rfb.z_right + z_margin)
+plt.ylim(delta_sep_min - delta_margin, delta_sep_max + delta_margin)
 plt.xlabel('zeta [m]')
 plt.ylabel('delta')
 plt.title('Probe particle trajectories')
