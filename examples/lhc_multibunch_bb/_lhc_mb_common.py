@@ -59,8 +59,6 @@ ZETA_PER_SLOT = 25e-9 * 2.99792458e8    # abstract per-bunch zeta label spacing 
 HERE = os.path.dirname(os.path.abspath(__file__))
 DATA = os.path.join(HERE, '..', '..', 'test_data', 'lhc_2024')
 SCHEME_FILE = os.path.join(DATA, '25ns_2460b_2448_2092_2239_144bpi_20inj.json')
-_IPTAG = ''.join(str(i) for i in IPS)
-GEOM_CACHE = os.path.join(HERE, f'_lhc_bb_geometry_ip{_IPTAG}_np{NPARASITIC}.json')
 
 
 # ----------------------------------------------------------------------------
@@ -95,9 +93,8 @@ def load_lhc():
     collide head-on. The beam-beam effect is then long-range only (BBLR), which
     is what this study targets. The head-on elements are still installed but act
     as "long-range" at the full IP separation."""
-    with open(os.path.join(DATA, 'lhc.seq')) as fid:
-        seq_text = fid.read().replace(' at=', 'at:=')
-    env = xt.load(string=seq_text, format='madx', reverse_lines=['lhcb2'])
+    env = xt.load(os.path.join(DATA, 'lhc.seq'), format='madx',
+                  reverse_lines=['lhcb2'])
     env.lhcb1.particle_ref = xt.Particles(mass0=xt.PROTON_MASS_EV, p0c=P0C)
     env.lhcb2.particle_ref = xt.Particles(mass0=xt.PROTON_MASS_EV, p0c=P0C)
     env.vars.load(os.path.join(DATA, 'injection_optics.madx'))
@@ -122,7 +119,7 @@ def install_markers(line, mirror, b_h_dist):
 
 
 # ----------------------------------------------------------------------------
-# Encounter geometry (offset, convolved betas, survey separation) with caching
+# Encounter geometry (offset, convolved betas, survey separation)
 # ----------------------------------------------------------------------------
 def _survey_positions(sv, names):
     r = sv.rows[names]
@@ -131,8 +128,9 @@ def _survey_positions(sv, names):
 
 def compute_geometry(line_b1, line_b2, b_h_dist, slot_len):
     """Compute per-encounter offset, convolved betas and geometric survey
-    separation. Expensive (twiss + survey of both full beams); cached to JSON."""
-    print('  twiss + survey of both beams (one-off, compiles kernels)...')
+    separation (twiss + survey of both full beams, ~10 s with prebuilt
+    kernels)."""
+    print('  twiss + survey of both beams...')
     tw1 = line_b1.twiss()
     tw2 = line_b2.twiss()
     sv1 = line_b1.survey()
@@ -179,18 +177,6 @@ def compute_geometry(line_b1, line_b2, b_h_dist, slot_len):
         )
     meta = dict(bare_qx_b1=float(tw1.qx), bare_qy_b1=float(tw1.qy),
                 bare_qx_b2=float(tw2.qx), bare_qy_b2=float(tw2.qy))
-    return geom, meta
-
-
-def get_geometry(line_b1, line_b2, b_h_dist, slot_len, use_cache=True):
-    if use_cache and os.path.exists(GEOM_CACHE):
-        print(f'  loading cached encounter geometry from {GEOM_CACHE}')
-        with open(GEOM_CACHE) as fid:
-            blob = json.load(fid)
-        return blob['geom'], blob['meta']
-    geom, meta = compute_geometry(line_b1, line_b2, b_h_dist, slot_len)
-    with open(GEOM_CACHE, 'w') as fid:
-        json.dump(dict(geom=geom, meta=meta), fid, indent=1)
     return geom, meta
 
 
@@ -294,15 +280,23 @@ def _update_opposing(bb_dict, mbtw_other, slots_other, marker_names_other, geom,
 
 
 def solve_self_consistent(line_b1, line_b2, bb_b1, bb_b2,
-                          slots_b1, slots_b2, geom, n_iter=3, chrom=False):
+                          slots_b1, slots_b2, geom, n_iter=3, chrom=False,
+                          mode='fast_orbit'):
     """Iterate twiss_multibunch on both beams, feeding each beam's per-bunch
-    closed orbit into the other beam's elements. Returns (mbtw_b1, mbtw_b2)."""
+    closed orbit into the other beam's elements. Returns (mbtw_b1, mbtw_b2).
+
+    The iteration only feeds back orbits, so by default the orbit-only fast
+    twiss is used (roughly half the cost of the optics-carrying default);
+    pass ``mode='fast'`` to get optics in the returned tables (e.g. for
+    dynamic-beta studies)."""
     zeta_b1 = np.array(slots_b1) * ZETA_PER_SLOT
     zeta_b2 = np.array(slots_b2) * ZETA_PER_SLOT
     mbtw_b1 = mbtw_b2 = None
     for it in range(n_iter):
-        mbtw_b1 = line_b1.twiss_multibunch(zeta_bunches=zeta_b1, chrom=chrom)
-        mbtw_b2 = line_b2.twiss_multibunch(zeta_bunches=zeta_b2, chrom=chrom)
+        mbtw_b1 = line_b1.twiss_multibunch(zeta_bunches=zeta_b1, chrom=chrom,
+                                           mode=mode)
+        mbtw_b2 = line_b2.twiss_multibunch(zeta_bunches=zeta_b2, chrom=chrom,
+                                           mode=mode)
         _update_opposing(bb_b1, mbtw_b2, slots_b2, MARKER_NAMES_B2, geom,
                          target_is_b2=False)
         _update_opposing(bb_b2, mbtw_b1, slots_b1, MARKER_NAMES_B1, geom,
@@ -374,5 +368,77 @@ def plot_results(slots_b1, mbtw_b1, bare_qx, bare_qy, title_suffix=''):
     axs[1].set_ylabel('orbit dev. from mean at IP1 [$\\mu$m]')
     axs[1].set_title('Per-bunch beam-beam closed-orbit deviation at IP1 (B1)')
     axs[1].legend()
+    plt.tight_layout()
+    return fig
+
+
+def plot_global_quantities(slots_b1, mbtw_b1, slots_b2, mbtw_b2):
+    """Bunch-by-bunch orbit at IP1, beta* at IP1, tunes, chromaticity and
+    coupling |C-| of both beams, from mode='fast' MultiBunchTwiss results
+    (which carry per-bunch optics and global quantities)."""
+    import matplotlib.pyplot as plt
+    mk = {False: marker_name('bb_ip1_ho', False),
+          True: marker_name('bb_ip1_ho', True)}
+
+    def at_ip1(mbtw, col, mirror):
+        return np.array([tw[col, mk[mirror]] for tw in mbtw])
+
+    fig, axs = plt.subplots(3, 2, figsize=(13, 10), sharex=True)
+
+    ax = axs[0, 0]   # orbit deviation at IP1 (physical frame for both beams)
+    for slots, mbtw, mirror, lab in [(slots_b1, mbtw_b1, False, 'B1'),
+                                     (slots_b2, mbtw_b2, True, 'B2')]:
+        sgn = -1.0 if mirror else 1.0
+        x = sgn * at_ip1(mbtw, 'x', mirror)
+        y = at_ip1(mbtw, 'y', mirror)
+        ax.plot(slots, (x - x.mean()) * 1e6, '.', ms=3, label=f'{lab} x')
+        ax.plot(slots, (y - y.mean()) * 1e6, '.', ms=3, label=f'{lab} y')
+    ax.set_ylabel(r'orbit dev. at IP1 [$\mu$m]')
+    ax.set_title('Per-bunch closed-orbit deviation at IP1')
+    ax.legend(ncol=2, fontsize=8)
+
+    ax = axs[0, 1]   # beta* at IP1
+    for slots, mbtw, mirror, lab in [(slots_b1, mbtw_b1, False, 'B1'),
+                                     (slots_b2, mbtw_b2, True, 'B2')]:
+        ax.plot(slots, at_ip1(mbtw, 'betx', mirror), '.', ms=3,
+                label=fr'{lab} $\beta_x^*$')
+        ax.plot(slots, at_ip1(mbtw, 'bety', mirror), '.', ms=3,
+                label=fr'{lab} $\beta_y^*$')
+    ax.set_ylabel(r'$\beta^*$ at IP1 [m]')
+    ax.set_title('Per-bunch $\\beta^*$ at IP1 (dynamic beta)')
+    ax.legend(ncol=2, fontsize=8)
+
+    ax = axs[1, 0]   # fractional tunes
+    for slots, mbtw, lab in [(slots_b1, mbtw_b1, 'B1'),
+                             (slots_b2, mbtw_b2, 'B2')]:
+        ax.plot(slots, mbtw.qx_frac, '.', ms=3, label=f'{lab} $q_x$')
+        ax.plot(slots, mbtw.qy_frac, '.', ms=3, label=f'{lab} $q_y$')
+    ax.set_ylabel('fractional tune')
+    ax.set_title('Per-bunch tunes')
+    ax.legend(ncol=2, fontsize=8)
+
+    ax = axs[1, 1]   # chromaticity
+    for slots, mbtw, lab in [(slots_b1, mbtw_b1, 'B1'),
+                             (slots_b2, mbtw_b2, 'B2')]:
+        ax.plot(slots, mbtw.dqx, '.', ms=3, label=f"{lab} $q'_x$")
+        ax.plot(slots, mbtw.dqy, '.', ms=3, label=f"{lab} $q'_y$")
+    ax.set_ylabel("chromaticity $q'$")
+    ax.set_title('Per-bunch chromaticity')
+    ax.legend(ncol=2, fontsize=8)
+
+    ax = axs[2, 0]   # coupling
+    for slots, mbtw, lab in [(slots_b1, mbtw_b1, 'B1'),
+                             (slots_b2, mbtw_b2, 'B2')]:
+        ax.plot(slots, mbtw.c_minus, '.', ms=3, label=lab)
+    ax.set_xlabel('25 ns slot')
+    ax.set_ylabel('$|C^-|$')
+    ax.set_title('Per-bunch coupling (closest tune approach)')
+    ax.legend(fontsize=8)
+
+    axs[2, 1].axis('off')
+    axs[1, 1].set_xlabel('25 ns slot')
+    axs[1, 1].tick_params(labelbottom=True)
+    plt.suptitle('Per-bunch optics & global quantities '
+                 '(mode="fast" multibunch twiss)')
     plt.tight_layout()
     return fig

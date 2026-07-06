@@ -6150,74 +6150,41 @@ class MultiBunchTwiss:
                 f'zeta={np.array2string(self.zeta_bunches, precision=3)})')
 
 
-def _twiss_multibunch_fast(line, zeta_bunches, steps_R_matrix=None,
-                           co_tol=1e-11, max_iter_co=20,
-                           compute_optics=False):
+def _mb_co_search(line, zeta_t, delta_t, Z_init, hs, co_tol, max_iter_co):
 
-    """Batched per-bunch 4D closed solution (closed orbit + tunes + element-by-
-    element orbit, optionally linear optics) for a multi-bunch beam.
+    """Batched Newton closed-orbit search: for every target (a bunch at fixed
+    ``zeta`` and ``delta``) track the closed-orbit candidate plus 8 transverse
+    central-difference probes, all targets in ONE tracking call per iteration.
+    Returns ``(Z, J, dzeta_turn)``: converged 4D closed orbits, one-turn 4x4
+    Jacobians, and the one-turn zeta slippage of each closed orbit."""
 
-    Instead of one full twiss per bunch (each with its own closed-orbit search
-    and finite-difference R-matrix probes), the finite-difference probes of ALL
-    bunches are tracked together: per Newton iteration one single tracking call
-    with ``n_bunches x 9`` particles (closed-orbit candidate + central-
-    difference probes in x, px, y, py, each at its own fixed ``zeta``). The
-    per-bunch 4x4 one-turn Jacobian from the probes drives a batched Newton
-    update of all closed orbits simultaneously; the same Jacobians give the
-    per-bunch tunes. A final single tracking call with an element-by-element
-    monitor records each bunch's closed orbit at every element.
-
-    Returns a list of lightweight :class:`~xtrack.table.Table` objects (one per
-    bunch) with columns ``name, s, x, px, y, py`` (orbit at each element) and
-    scalars ``qx``, ``qy`` (FRACTIONAL tunes) and ``zeta0``.
-
-    With ``compute_optics=True`` the final monitored pass tracks the probes
-    (plus two dispersion probes in delta) instead of only the closed orbits.
-    The per-element transfer Jacobians obtained by finite differences propagate
-    the Courant-Snyder normal form W (from :mod:`xtrack.linear_normal_form`,
-    same conventions as standard twiss), adding columns ``betx, alfx, bety,
-    alfy, mux, muy, dx, dpx, dy, dpy`` and scalars ``qx_full``/``qy_full``
-    (accumulated phase advance, integer part included -- meaningful only if no
-    single element advances the phase by more than one turn, i.e. on granular
-    lattices, NOT on lines made of long arc maps).
-    """
-
-    ctx = line._context
-    ctx2np = ctx.nparray_from_context_array
-    zeta_bunches = np.atleast_1d(np.asarray(zeta_bunches, dtype=float))
-    n_bunches = len(zeta_bunches)
-
-    steps = _complete_steps_r_matrix_with_default(steps_R_matrix)
-    hs = np.array([steps['dx'], steps['dpx'], steps['dy'], steps['dpy']])
-
-    # Batched Newton search for the per-bunch 4D closed orbit (zeta fixed,
-    # delta = 0), layout per bunch: [co, x+, x-, px+, px-, y+, y-, py+, py-]
-    ZZ = np.zeros((n_bunches, 4))
-    JJ = None
+    ctx2np = line._context.nparray_from_context_array
+    n_t = len(zeta_t)
+    ZZ = Z_init.copy()
     converged = False
     for _ in range(max_iter_co):
         XX = np.repeat(ZZ[:, None, :], 9, axis=1)
         for kk in range(4):
             XX[:, 1 + 2 * kk, kk] += hs[kk]
             XX[:, 2 + 2 * kk, kk] -= hs[kk]
-        zz = np.repeat(zeta_bunches[:, None], 9, axis=1)
         pp = line.build_particles(
             x=XX[..., 0].ravel(), px=XX[..., 1].ravel(),
             y=XX[..., 2].ravel(), py=XX[..., 3].ravel(),
-            zeta=zz.ravel(), delta=0.)
+            zeta=np.repeat(zeta_t[:, None], 9, axis=1).ravel(),
+            delta=np.repeat(delta_t[:, None], 9, axis=1).ravel())
         line.track(pp, num_turns=1)
-        state = ctx2np(pp.state)
-        if not np.all(state > 0):
+        if not np.all(ctx2np(pp.state) > 0):
             raise ClosedOrbitSearchError(
                 'Particles lost while tracking the multibunch finite-'
                 'difference probes')
         order = np.argsort(ctx2np(pp.particle_id))
         out = np.stack([ctx2np(pp.x), ctx2np(pp.px),
                         ctx2np(pp.y), ctx2np(pp.py)], axis=-1)[order]
-        out = out.reshape(n_bunches, 9, 4)
+        out = out.reshape(n_t, 9, 4)
+        zeta_out = ctx2np(pp.zeta)[order].reshape(n_t, 9)[:, 0]
 
         FF = out[:, 0, :] - ZZ                       # one-turn residual
-        JJ = np.empty((n_bunches, 4, 4))
+        JJ = np.empty((n_t, 4, 4))
         for kk in range(4):
             JJ[:, :, kk] = (out[:, 1 + 2 * kk, :]
                             - out[:, 2 + 2 * kk, :]) / (2 * hs[kk])
@@ -6230,22 +6197,87 @@ def _twiss_multibunch_fast(line, zeta_bunches, steps_R_matrix=None,
         raise ClosedOrbitSearchError(
             f'Multibunch closed-orbit search did not converge in '
             f'{max_iter_co} iterations (residual {np.max(np.abs(FF)):.2e})')
+    return ZZ, JJ, zeta_out - zeta_t
 
-    # Per-bunch fractional tunes from the 4x4 one-turn Jacobians
-    qx = np.full(n_bunches, np.nan)
-    qy = np.full(n_bunches, np.nan)
+
+def _mb_fractional_tunes(JJ):
+
+    """Per-target fractional tunes from the 4x4 one-turn Jacobians
+    (eigenvalues; modes classified by eigenvector dominance; the sign of
+    R12/R34 resolves the q <-> 1-q mirror ambiguity)."""
+
+    n_t = len(JJ)
+    qx = np.full(n_t, np.nan)
+    qy = np.full(n_t, np.nan)
     eigvals, eigvecs = np.linalg.eig(JJ)
-    for nn in range(n_bunches):
+    for nn in range(n_t):
         for ii in np.where(np.imag(eigvals[nn]) > 0)[0]:
             vv = eigvecs[nn][:, ii]
             is_x = (abs(vv[0])**2 + abs(vv[1])**2
                     >= abs(vv[2])**2 + abs(vv[3])**2)
             qq = np.angle(eigvals[nn][ii]) / (2 * np.pi)   # in (0, 0.5)
-            # mirror ambiguity: R12 = beta sin(2 pi q) fixes the half-plane
             if is_x:
                 qx[nn] = qq if JJ[nn][0, 1] >= 0 else 1 - qq
             else:
                 qy[nn] = qq if JJ[nn][2, 3] >= 0 else 1 - qq
+    return qx, qy
+
+
+def _twiss_multibunch_fast(line, zeta_bunches, steps_R_matrix=None,
+                           co_tol=1e-11, max_iter_co=20,
+                           compute_optics=False, delta_chrom=5e-5):
+
+    """Batched per-bunch 4D closed solution (closed orbit + tunes + element-by-
+    element orbit, optionally linear optics and global quantities) for a
+    multi-bunch beam.
+
+    Instead of one full twiss per bunch (each with its own closed-orbit search
+    and finite-difference R-matrix probes), the finite-difference probes of ALL
+    bunches are tracked together: per Newton iteration one single tracking call
+    with ``n_bunches x 9`` particles (closed-orbit candidate + central-
+    difference probes in x, px, y, py, each at its own fixed ``zeta``). The
+    per-bunch 4x4 one-turn Jacobian from the probes drives a batched Newton
+    update of all closed orbits simultaneously; the same Jacobians give the
+    per-bunch fractional tunes. A final single tracking call with an element-
+    by-element monitor records each bunch's closed orbit at every element.
+
+    With ``compute_optics=False`` (mode='fast_orbit') the per-bunch
+    :class:`TwissTable` has columns ``name, s, x, px, y, py`` and scalars
+    ``qx``/``qy`` == ``qx_frac``/``qy_frac`` (only the FRACTIONAL tunes are
+    available without the optics pass) and ``zeta0``.
+
+    With ``compute_optics=True`` (mode='fast') the final monitored pass tracks
+    the probes (plus two dispersion probes in delta) instead of only the
+    closed orbits. The per-element transfer Jacobians propagate the Courant-
+    Snyder normal form W (from :mod:`xtrack.linear_normal_form`, same
+    conventions as standard twiss), adding columns ``betx, alfx, bety, alfy,
+    mux, muy, dx, dpx, dy, dpy``. Global scalars follow the standard twiss
+    naming: ``qx``/``qy`` are the ACCUMULATED tunes (integer part included,
+    from mux/muy -- meaningful only if no single element advances the phase by
+    more than one turn), ``qx_frac``/``qy_frac`` the exact fractional tunes,
+    ``dqx``/``dqy`` the chromaticities (from two additional off-momentum
+    closed-orbit searches at delta = +/- ``delta_chrom``), ``c_minus`` the
+    closest-tune-approach coupling coefficient, and ``slip_factor``/
+    ``slip_factor_dzeta_ddelta``/``momentum_compaction_factor`` the
+    longitudinal slippage quantities of the off-momentum closed orbits.
+    """
+
+    ctx = line._context
+    ctx2np = ctx.nparray_from_context_array
+    zeta_bunches = np.atleast_1d(np.asarray(zeta_bunches, dtype=float))
+    n_bunches = len(zeta_bunches)
+
+    steps = _complete_steps_r_matrix_with_default(steps_R_matrix)
+    hs = np.array([steps['dx'], steps['dpx'], steps['dy'], steps['dpy']])
+
+    # Batched Newton search for the per-bunch 4D closed orbit (zeta fixed,
+    # delta = 0), layout per bunch: [co, x+, x-, px+, px-, y+, y-, py+, py-]
+    ZZ, JJ, _ = _mb_co_search(line, zeta_bunches, np.zeros(n_bunches),
+                              np.zeros((n_bunches, 4)), hs, co_tol,
+                              max_iter_co)
+
+    # Per-bunch fractional tunes from the 4x4 one-turn Jacobians
+    qx_frac, qy_frac = _mb_fractional_tunes(JJ)
 
     ltab = line.get_table()   # includes '_end_point', matching the monitor
     names = np.asarray(ltab.name)
@@ -6264,12 +6296,15 @@ def _twiss_multibunch_fast(line, zeta_bunches, steps_R_matrix=None,
 
         bunch_twiss = []
         for nn in range(n_bunches):
-            tab = Table(dict(name=names, s=s_all,
-                             x=x_ebe[nn].copy(), px=px_ebe[nn].copy(),
-                             y=y_ebe[nn].copy(), py=py_ebe[nn].copy()),
-                        index='name')
-            tab._data['qx'] = float(qx[nn])
-            tab._data['qy'] = float(qy[nn])
+            tab = TwissTable(dict(name=names, s=s_all,
+                                  x=x_ebe[nn].copy(), px=px_ebe[nn].copy(),
+                                  y=y_ebe[nn].copy(), py=py_ebe[nn].copy()),
+                             periodic=True)
+            # without the optics pass only the fractional tunes are available
+            tab._data['qx'] = float(qx_frac[nn])
+            tab._data['qy'] = float(qy_frac[nn])
+            tab._data['qx_frac'] = float(qx_frac[nn])
+            tab._data['qy_frac'] = float(qy_frac[nn])
             tab._data['zeta0'] = float(zeta_bunches[nn])
             bunch_twiss.append(tab)
         return bunch_twiss
@@ -6287,9 +6322,41 @@ def _twiss_multibunch_fast(line, zeta_bunches, steps_R_matrix=None,
         WW, _, _, _ = lnf.get_linear_normal_form(M6, only_4d_block=True)
         W0[nn] = WW[:4, :4]
 
+    # Chromaticity and longitudinal slippage: two additional batched
+    # closed-orbit searches at delta = +/- delta_chrom (both delta families
+    # stacked in one search; seeded with the on-momentum orbits, the Newton
+    # reconverges in a couple of iterations).
+    zeta2 = np.concatenate([zeta_bunches, zeta_bunches])
+    delta2 = np.concatenate([np.full(n_bunches, +delta_chrom),
+                             np.full(n_bunches, -delta_chrom)])
+    _, J2, dzeta2 = _mb_co_search(line, zeta2, delta2,
+                                  np.concatenate([ZZ, ZZ]), hs, co_tol,
+                                  max_iter_co)
+    qxp, qyp = _mb_fractional_tunes(J2[:n_bunches])
+    qxm, qym = _mb_fractional_tunes(J2[n_bunches:])
+
+    def _wrap_half(v):
+        return (v + 0.5) % 1.0 - 0.5
+
+    dqx = _wrap_half(qxp - qxm) / (2 * delta_chrom)
+    dqy = _wrap_half(qyp - qym) / (2 * delta_chrom)
+    # one-turn zeta slippage of the off-momentum closed orbits (the slippage
+    # of the on-momentum orbit cancels in the difference)
+    slip_dzeta_ddelta = (dzeta2[:n_bunches]
+                         - dzeta2[n_bunches:]) / (2 * delta_chrom)
+    line_length = line.get_length()
+    gamma0 = float(ctx2np(line.particle_ref.gamma0)[0])
+    if line_length > 0:
+        slip_factor = -slip_dzeta_ddelta / line_length
+        momentum_compaction = slip_factor + 1 / gamma0**2
+    else:
+        slip_factor = np.full(n_bunches, np.nan)
+        momentum_compaction = np.full(n_bunches, np.nan)
+
     out_cols = {kk: np.empty((n_bunches, n_pts)) for kk in
                 ['x', 'px', 'y', 'py', 'betx', 'alfx', 'bety', 'alfy',
                  'mux', 'muy', 'dx', 'dpx', 'dy', 'dpy']}
+    cmin_pts = np.empty((n_bunches, n_pts))
 
     # probes per bunch: [co, x+-, px+-, y+-, py+- (transverse), delta+-]
     n_probes = 11
@@ -6354,16 +6421,44 @@ def _twiss_multibunch_fast(line, zeta_bunches, steps_R_matrix=None,
                 [np.zeros((nb, 1)), np.cumsum(dth, axis=1)], axis=1)
             out_cols[th_key][c0:c1] = mu / (2 * np.pi)
 
+        # local coupling coefficient (Y. Luo et al., C-A/AP/#174 and R. Jones,
+        # CAS 2018 -- same formula as standard twiss). Standard twiss stores
+        # the W matrix re-phased to Courant-Snyder form at every element
+        # (w12 = 0, w11 = sqrt(betx) > 0); the numerators are invariant under
+        # that in-block rotation, the denominators are sqrt(betx)/sqrt(bety).
+        c_r1 = (np.sqrt(Ws[..., 2, 0]**2 + Ws[..., 2, 1]**2)
+                / np.sqrt(out_cols['betx'][c0:c1]))
+        c_r2 = (np.sqrt(Ws[..., 0, 2]**2 + Ws[..., 0, 3]**2)
+                / np.sqrt(out_cols['bety'][c0:c1]))
+        dq_frac = np.abs(np.mod(out_cols['mux'][c0:c1, -1], 1)
+                         - np.mod(out_cols['muy'][c0:c1, -1], 1))[:, None]
+        cmin_pts[c0:c1] = (2 * np.sqrt(c_r1 * c_r2) * dq_frac
+                           / (1 + c_r1 * c_r2))
+
+    if line_length > 0:
+        c_minus = trapz(cmin_pts, s_all, axis=1) / line_length
+    else:
+        c_minus = np.mean(cmin_pts, axis=1)
+
     bunch_twiss = []
     for nn in range(n_bunches):
         data = dict(name=names, s=s_all)
         for key, arr in out_cols.items():
             data[key] = arr[nn].copy()
-        tab = Table(data, index='name')
-        tab._data['qx'] = float(qx[nn])
-        tab._data['qy'] = float(qy[nn])
-        tab._data['qx_full'] = float(out_cols['mux'][nn][-1])
-        tab._data['qy_full'] = float(out_cols['muy'][nn][-1])
+        tab = TwissTable(data, periodic=True)
+        # standard twiss naming: qx/qy are the accumulated (full) tunes
+        tab._data['qx'] = float(out_cols['mux'][nn][-1])
+        tab._data['qy'] = float(out_cols['muy'][nn][-1])
+        tab._data['qx_frac'] = float(qx_frac[nn])
+        tab._data['qy_frac'] = float(qy_frac[nn])
+        tab._data['dqx'] = float(dqx[nn])
+        tab._data['dqy'] = float(dqy[nn])
+        tab._data['c_minus'] = float(c_minus[nn])
+        tab._data['slip_factor'] = float(slip_factor[nn])
+        tab._data['slip_factor_dzeta_ddelta'] = float(slip_dzeta_ddelta[nn])
+        tab._data['momentum_compaction_factor'] = float(
+            momentum_compaction[nn])
+        tab._data['line_length'] = float(line_length)
         tab._data['zeta0'] = float(zeta_bunches[nn])
         bunch_twiss.append(tab)
     return bunch_twiss
@@ -6371,8 +6466,7 @@ def _twiss_multibunch_fast(line, zeta_bunches, steps_R_matrix=None,
 
 def twiss_line_multibunch(line, zeta_bunches=None, particles=None,
                           method='4d', bunch_names=None,
-                          show_progress=True, mode='fast',
-                          compute_optics=False, **kwargs):
+                          show_progress=True, mode='fast', **kwargs):
 
     """
     Compute a closed (periodic) Twiss solution for each bunch of a multi-bunch
@@ -6412,25 +6506,27 @@ def twiss_line_multibunch(line, zeta_bunches=None, particles=None,
     show_progress : bool, optional
         If True (default), display a ``tqdm`` progress bar over the bunches
         (``mode='full'`` only).
-    mode : {'fast', 'full'}, optional
+    mode : {'fast', 'fast_orbit', 'full'}, optional
         ``'fast'`` (default): the finite-difference probes of ALL bunches are
         tracked together (one tracking call per Newton iteration of the
-        batched closed-orbit search, plus one element-by-element call), which
-        is orders of magnitude faster than one twiss per bunch. The per-bunch
-        result is a lightweight table with the element-by-element closed orbit
-        (``name, s, x, px, y, py``) and the FRACTIONAL tunes ``qx``, ``qy``;
-        optics functions (beta, dispersion, chromaticity, ...) are not
-        computed. Requires ``method='4d'``.
+        batched closed-orbit search, plus one monitored element-by-element
+        call and two off-momentum closed-orbit searches), which is orders of
+        magnitude faster than one twiss per bunch. The per-bunch result is a
+        :class:`TwissTable` with the element-by-element closed orbit and
+        linear optics (``name, s, x, px, y, py, betx, alfx, bety, alfy, mux,
+        muy, dx, dpx, dy, dpy``) and global quantities following the standard
+        twiss naming: ``qx``/``qy`` (tunes including integer), ``qx_frac``/``qy_frac``
+        (fractional tunes), ``dqx``/``dqy`` (chromaticities),
+        ``c_minus``, ``slip_factor``, ``momentum_compaction_factor``.
+        Requires ``method='4d'``.
+        ``'fast_orbit'``: as ``'fast'`` but the optics pass and the global
+        quantities are skipped; the per-bunch :class:`TwissTable` contains
+        only the closed orbit (``name, s, x, px, y, py``) and the fractional
+        tunes (``qx`` == ``qx_frac``: the integer part is not available
+        without the optics pass). About a third of the cost of ``'fast'`` --
+        useful in iteration loops that only feed back orbits.
         ``'full'``: one full :func:`twiss_line` per bunch (complete
-        :class:`TwissTable` including optics, integer tunes, ...); slow.
-    compute_optics : bool, optional
-        In ``mode='fast'``, also compute the per-bunch linear optics element by
-        element (``betx, alfx, bety, alfy, mux, muy, dx, dpx, dy, dpy``) and
-        the accumulated tunes ``qx_full``/``qy_full`` (integer part included;
-        meaningful only on granular lattices where no single element advances
-        the phase by more than one turn). Costs one extra monitored tracking
-        pass with 11 probes per bunch (comparable to one Newton iteration).
-        Default False.
+        :class:`TwissTable`); slow.
     **kwargs :
         Additional keyword arguments forwarded to :func:`twiss_line` /
         :meth:`Line.twiss` (e.g. ``nemitt_x``, ``chrom``, ...) in
@@ -6452,14 +6548,12 @@ def twiss_line_multibunch(line, zeta_bunches=None, particles=None,
             'internally to each bunch position.')
 
     if (zeta_bunches is None) == (particles is None):
-        raise ValueError(
-            'Provide exactly one of `zeta_bunches` or `particles`.')
+        raise ValueError('Provide exactly one of `zeta_bunches` or `particles`.')
 
     if particles is not None:
         state = particles._context.nparray_from_context_array(particles.state)
         mask = state > 0
-        zeta_bunches = particles._context.nparray_from_context_array(
-            particles.zeta)[mask]
+        zeta_bunches = particles._context.nparray_from_context_array(particles.zeta)[mask]
 
     zeta_bunches = np.atleast_1d(np.asarray(zeta_bunches, dtype=float))
     num_bunches = len(zeta_bunches)
@@ -6467,21 +6561,15 @@ def twiss_line_multibunch(line, zeta_bunches=None, particles=None,
     if num_bunches == 0:
         raise ValueError('No bunches to twiss.')
 
-    # NOTE: no special handling of the beam-beam elements is done here. The
-    # closed-orbit search keeps each bunch's zeta pinned (4d) and the residual
-    # zeta drift along the line is micrometre-scale, so the pairing tolerance
-    # configured on the elements by the user (typically a fraction of the
-    # bunch spacing) is not perturbed by the twiss probes.
-    if mode == 'fast':
+    if mode in ('fast', 'fast_orbit'):
         if method != '4d':
-            raise ValueError("mode='fast' requires method='4d'")
+            raise ValueError(f"mode='{mode}' requires method='4d'")
         unsupported = set(kwargs) - {'chrom'}
         if unsupported:
             raise ValueError(
                 f'kwargs {sorted(unsupported)} are not supported in '
-                f"mode='fast'; use mode='full'")
-        bunch_twiss = _twiss_multibunch_fast(line, zeta_bunches,
-                                             compute_optics=compute_optics)
+                f"mode='{mode}'; use mode='full'")
+        bunch_twiss = _twiss_multibunch_fast(line, zeta_bunches, compute_optics=(mode == 'fast'))
     elif mode == 'full':
         from tqdm.auto import tqdm
         bunch_twiss = []
@@ -6491,6 +6579,6 @@ def twiss_line_multibunch(line, zeta_bunches=None, particles=None,
             tw = twiss_line(line, method=method, zeta0=float(zb), **kwargs)
             bunch_twiss.append(tw)
     else:
-        raise ValueError(f'Unknown mode {mode!r} (use "fast" or "full")')
+        raise ValueError(f'Unknown mode {mode!r} (use "fast", "fast_orbit" or "full")')
 
     return MultiBunchTwiss(bunch_twiss, zeta_bunches, bunch_names=bunch_names)

@@ -40,7 +40,7 @@ beta0 = line_b1.particle_ref.beta0[0]
 C.install_markers(line_b1, mirror=False, b_h_dist=b_h_dist)
 C.install_markers(line_b2, mirror=True, b_h_dist=b_h_dist)
 
-geom, meta = C.get_geometry(line_b1, line_b2, b_h_dist, slot_len)
+geom, meta = C.compute_geometry(line_b1, line_b2, b_h_dist, slot_len)
 
 # ----------------------------------------------------------------------------
 # Timing comparison and reduced-line construction
@@ -82,8 +82,19 @@ print('Self-consistent solve on the reduced (second-order-map) lines:')
 t0 = time.time()
 mbtw_b1, mbtw_b2 = C.solve_self_consistent(
     red_b1, red_b2, bb_b1, bb_b2, slots_b1, slots_b2, geom, n_iter=N_ITER)
-print(f'  solve time ({len(slots_b1)}+{len(slots_b2)} bunches, {N_ITER} iters): '
-      f'{time.time() - t0:.1f} s')
+print(f'  solve time ({len(slots_b1)}+{len(slots_b2)} bunches, {N_ITER} iters): {time.time() - t0:.1f} s')
+
+# Optional: per-bunch optics (dynamic beta*) and global quantities (tunes, chromaticity, coupling)
+COMPUTE_OPTICS_PARAMS = os.environ.get('COMPUTE_OPTICS_PARAMS', '1') == '1'
+if COMPUTE_OPTICS_PARAMS:
+    import numpy as np
+    print('Final mode="fast" twiss (per-bunch optics + global quantities):')
+    t0 = time.time()
+    mbtw_b1 = red_b1.twiss_multibunch(
+        zeta_bunches=np.array(slots_b1) * C.ZETA_PER_SLOT, mode='fast')
+    mbtw_b2 = red_b2.twiss_multibunch(
+        zeta_bunches=np.array(slots_b2) * C.ZETA_PER_SLOT, mode='fast')
+    print(f'  final twiss (both beams): {time.time() - t0:.1f} s')
 
 # Reference the tune shift to each reduced line's own bare tune (on the
 # fractional-tune circle: fast-mode twiss returns fractional tunes)
@@ -92,16 +103,15 @@ dqx_b1 = C.wrap_frac_tune(mbtw_b1.qx - tw_red.qx)
 print(f"\nB1 tune shift: dqx in [{dqx_b1.min():.2e}, {dqx_b1.max():.2e}]")
 
 # Save per-bunch results of both beams as DataFrames
-df_b1 = C.results_dataframe(mbtw_b1, slots_b1, tw_red.qx, tw_red.qy,
-                            ip='ip1', reverse=False)
-df_b2 = C.results_dataframe(mbtw_b2, slots_b2, tw_red2.qx, tw_red2.qy,
-                            ip='ip1', reverse=True)
+df_b1 = C.results_dataframe(mbtw_b1, slots_b1, tw_red.qx, tw_red.qy, ip='ip1', reverse=False)
+df_b2 = C.results_dataframe(mbtw_b2, slots_b2, tw_red2.qx, tw_red2.qy, ip='ip1', reverse=True)
 out_b1 = os.path.join(C.HERE, 'results_b1.pkl')
 out_b2 = os.path.join(C.HERE, 'results_b2.pkl')
 df_b1.to_pickle(out_b1)
 df_b2.to_pickle(out_b2)
 print(f'saved {out_b1}\nsaved {out_b2}')
 
-C.plot_results(slots_b1, mbtw_b1, tw_red.qx, tw_red.qy,
-               title_suffix='  [second-order maps]')
+C.plot_results(slots_b1, mbtw_b1, tw_red.qx, tw_red.qy, title_suffix='  [second-order maps]')
+if COMPUTE_OPTICS_PARAMS:
+    C.plot_global_quantities(slots_b1, mbtw_b1, slots_b2, mbtw_b2)
 plt.show()

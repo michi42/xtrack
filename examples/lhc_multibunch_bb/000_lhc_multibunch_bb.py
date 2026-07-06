@@ -38,7 +38,7 @@ beta0 = line_b1.particle_ref.beta0[0]
 C.install_markers(line_b1, mirror=False, b_h_dist=b_h_dist)
 C.install_markers(line_b2, mirror=True, b_h_dist=b_h_dist)
 
-geom, meta = C.get_geometry(line_b1, line_b2, b_h_dist, slot_len)
+geom, meta = C.compute_geometry(line_b1, line_b2, b_h_dist, slot_len)
 for ip in C.IPS:
     print(f'  IP{ip}: head-on offset = {geom[f"bb_ip{ip}_ho"]["offset"]} slots')
 
