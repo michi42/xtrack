@@ -23,12 +23,16 @@ import os
 import time
 import numpy as np
 import matplotlib.pyplot as plt
+import xobjects as xo
 
 import lhc_mb_common as mb
 
-sim = mb.LHCMultibunchBB.collision()
+omp = os.environ.get('LHC_OMP', 'serial')
+sim = mb.LHCMultibunchBB.collision(context=(
+    xo.ContextCpu() if omp == 'serial'
+    else xo.ContextCpu(omp_num_threads='auto' if omp == 'auto' else int(omp))))
 
-N_ITER = int(os.environ.get('LHC_NITER', '6'))
+N_ITER = int(os.environ.get('LHC_NITER', '4'))
 ALL_BUNCHES = os.environ.get('LHC_ALL', '1') == '1'
 WINDOW = int(os.environ.get('LHC_WINDOW', '48'))
 COMPUTE_OPTICS_PARAMS = os.environ.get('COMPUTE_OPTICS_PARAMS', '1') == '1'
