@@ -63,6 +63,40 @@ np.testing.assert_allclose(np.mean(p.zeta), tw.zeta[0], rtol=0, atol=2e-3)
 np.testing.assert_allclose(np.std(p.zeta), sigma_z, rtol=2e-2, atol=0)
 np.testing.assert_allclose(np.mean(p.delta), tw.delta[0], rtol=0, atol=2e-5)
 
+z_probe = rfb.zeta0 + np.array([-0.25, 0, 0.25]) * (rfb.z_right - rfb.z_left)
+delta_probe_sep = rfb.separatrix(z_probe)
+delta_probe_inside = rfb.dp0 + 0.9 * (delta_probe_sep - rfb.dp0)
+delta_probe_outside = rfb.dp0 + 1.1 * (delta_probe_sep - rfb.dp0)
+z_probe_all = np.r_[z_probe, z_probe]
+delta_probe_all = np.r_[delta_probe_inside, delta_probe_outside]
+
+probe = line.build_particles(
+    zeta=z_probe_all,
+    delta=delta_probe_all,
+)
+
+assert np.all(rfb.is_in_separatrix(probe.zeta[:3], probe.delta[:3]))
+assert not np.any(rfb.is_in_separatrix(probe.zeta[3:], probe.delta[3:]))
+
+line.track(probe, num_turns=200, turn_by_turn_monitor=True)
+mon = line.record_last_track
+
+inside_is_accepted = rfb.is_in_separatrix(
+    np.array(mon.zeta[:3, :]),
+    np.array(mon.delta[:3, :]),
+)
+outside_is_accepted = rfb.is_in_separatrix(
+    np.array(mon.zeta[3:, :]),
+    np.array(mon.delta[3:, :]),
+)
+
+assert np.all(inside_is_accepted)
+assert not np.any(outside_is_accepted)
+assert np.all(np.ptp(np.array(mon.zeta[:3, :]), axis=1)
+              < (rfb.z_right - rfb.z_left))
+assert np.all(np.ptp(np.array(mon.zeta[3:, :]), axis=1)
+              > 3 * (rfb.z_right - rfb.z_left))
+
 import matplotlib.pyplot as plt
 plt.close('all')
 plt.figure(1)
@@ -70,4 +104,18 @@ plt.plot(p.zeta, p.delta, '.', markersize=0.5, alpha=0.5)
 plt.plot(z_separatrix, delta_separatrix)
 plt.plot(z_separatrix, delta_separatrix_neg)
 plt.plot(tw.zeta[0], tw.delta[0], 'x')
+
+plt.figure(2)
+plt.plot(z_separatrix, delta_separatrix, color='k', linewidth=1.5)
+plt.plot(z_separatrix, delta_separatrix_neg, color='k', linewidth=1.5)
+for ii in range(3):
+    plt.plot(mon.zeta[ii, :], mon.delta[ii, :], color='C0', linewidth=1)
+    plt.plot(mon.zeta[ii + 3, :], mon.delta[ii + 3, :], color='C3',
+             linewidth=1)
+plt.plot(z_probe_all[:3], delta_probe_all[:3], 'o', color='C0')
+plt.plot(z_probe_all[3:], delta_probe_all[3:], 'o', color='C3')
+plt.plot(tw.zeta[0], tw.delta[0], 'x', color='k')
+plt.xlabel('zeta [m]')
+plt.ylabel('delta')
+plt.title('Probe particle trajectories')
 plt.show()
