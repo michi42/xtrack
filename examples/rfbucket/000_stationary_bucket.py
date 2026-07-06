@@ -6,13 +6,14 @@ import xobjects as xo
 np.random.seed(12345)
 
 sigma_z = 12e-2
+shift_zeta = -0.1
 
 env = xt.load(['../../test_data/sps_thick/sps.seq',
                 '../../test_data/sps_thick/lhc_q20.str'])
 line = env.sps
 line.set_particle_ref('proton', p0c=26e9)
 
-line.append('timedelay', xt.TimeDelay(shift_zeta=0.1))
+line.append('timedelay', xt.TimeDelay(shift_zeta=shift_zeta))
 
 env['actcse.31632'].frequency = 200e6
 env['actcse.31632'].voltage = 4.5e6
