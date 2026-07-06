@@ -2,6 +2,10 @@ import xtrack as xt
 import xpart as xp
 import numpy as np
 
+np.random.seed(12345)
+
+sigma_z = 12e-2
+
 env = xt.load(['../../test_data/sps_thick/sps.seq',
                 '../../test_data/sps_thick/lhc_q20.str'])
 line = env.sps
@@ -20,13 +24,44 @@ p = xp.generate_matched_gaussian_bunch(
     num_particles=100_000,
     nemitt_x=2e-6,
     nemitt_y=2e-6,
-    sigma_z=12e-2)
+    sigma_z=sigma_z)
 
 rfb = line._get_bucket()
 
 z_separatrix = np.linspace(rfb.z_left, rfb.z_right, 1000)
 delta_separatrix = rfb.separatrix(z_separatrix)
 delta_separatrix_neg = rfb.separatrix(z_separatrix, sgn=-1)
+
+np.testing.assert_allclose(rfb.zeta0, tw.zeta[0], rtol=0, atol=1e-12)
+np.testing.assert_allclose(rfb.dp0, tw.delta[0], rtol=0, atol=1e-12)
+np.testing.assert_allclose(rfb.z_sfp, tw.zeta[0], rtol=0, atol=1e-9)
+np.testing.assert_allclose(rfb.z_left + rfb.z_right, 2 * rfb.zeta0,
+                           rtol=0, atol=1e-12)
+
+np.testing.assert_allclose(
+    rfb.h_sfp(),
+    rfb.hamiltonian(rfb.z_sfp, rfb.dp0),
+    rtol=0,
+    atol=1e-12,
+)
+
+np.testing.assert_allclose(
+    (delta_separatrix + delta_separatrix_neg) / 2,
+    rfb.dp0,
+    rtol=0,
+    atol=1e-14,
+)
+np.testing.assert_allclose(delta_separatrix[[0, -1]], rfb.dp0,
+                           rtol=0, atol=1e-12)
+np.testing.assert_allclose(delta_separatrix_neg[[0, -1]], rfb.dp0,
+                           rtol=0, atol=1e-12)
+
+assert rfb.is_in_separatrix(tw.zeta[0], tw.delta[0])
+assert np.all(rfb.is_in_separatrix(np.array(p.zeta), np.array(p.delta)))
+
+np.testing.assert_allclose(np.mean(p.zeta), tw.zeta[0], rtol=0, atol=2e-3)
+np.testing.assert_allclose(np.std(p.zeta), sigma_z, rtol=2e-2, atol=0)
+np.testing.assert_allclose(np.mean(p.delta), tw.delta[0], rtol=0, atol=2e-5)
 
 import matplotlib.pyplot as plt
 plt.close('all')
