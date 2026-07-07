@@ -186,22 +186,19 @@ def _install_bb(line, mirror, geom, n_other, nemitt, gamma0, beta0):
 
 
 def _update_opposing(bb_dict, mbtw_other, zeta_other, marker_names_other,
-                     geom, target_is_b2, p0c, bunch_intensity):
+                     geom, p0c, bunch_intensity):
     """Write the opposing beam's per-bunch orbit + survey separation into the
-    beam-beam elements. Between the two (opposite-parity) beam lines x flips
-    and y does not; matching TRAIN, the survey separation enters as -sep_x in
-    x for both beams and -/+sep_y in y for beam 1/2."""
+    beam-beam elements. Between the two (opposite-parity) beam lines x flips"""
     # mbtw['x', names] resolves the marker rows once and slices the numpy
     # columns of all bunch tables (fast multi-element access)
     xs = -mbtw_other['x', marker_names_other]
     ys = mbtw_other['y', marker_names_other]
-    y_sep_sign = 1.0 if target_is_b2 else -1.0
     p = xt.Particles(p0c=p0c, mass0=xt.PROTON_MASS_EV, q0=1.0,
                      x=np.zeros(len(zeta_other)), y=np.zeros(len(zeta_other)),
                      zeta=zeta_other, weight=bunch_intensity)
     for j, name in enumerate(ENC_NAMES):
         p.x[:] = xs[:, j] - geom[name]['sep_x']
-        p.y[:] = ys[:, j] + y_sep_sign * geom[name]['sep_y']
+        p.y[:] = ys[:, j] - geom[name]['sep_y']
         bb_dict[name].update_from_other_beam(p)
 
 
@@ -248,11 +245,9 @@ def _run_xsuite_scenario(scenario):
                                           mode='fast_orbit',
                                           show_progress=False)
         _update_opposing(bb_b1, mbtw_b2, zeta_b2, MARKER_NAMES[True], geom,
-                         target_is_b2=False, p0c=par['p0c'],
-                         bunch_intensity=par['bunch_intensity'])
+                         p0c=par['p0c'], bunch_intensity=par['bunch_intensity'])
         _update_opposing(bb_b2, mbtw_b1, zeta_b1, MARKER_NAMES[False], geom,
-                         target_is_b2=True, p0c=par['p0c'],
-                         bunch_intensity=par['bunch_intensity'])
+                         p0c=par['p0c'], bunch_intensity=par['bunch_intensity'])
 
     def extract(mbtw, slots, bare_qx, bare_qy, mirror):
         marker = _marker_name('bb_ip1_ho', mirror)

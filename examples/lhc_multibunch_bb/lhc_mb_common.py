@@ -218,8 +218,7 @@ class LHCMultibunchBB:
         for j, (name, ip, sn) in enumerate(self.encounter_specs()):
             n1, n2 = self.marker_names_b1[j], self.marker_names_b2[j]
             s_marker = tw1['s', n1]
-            offset = int(round(2 * (s_marker - s_ip1) / slot_len)) \
-                % self.N_SLOTS
+            offset = int(round(2 * (s_marker - s_ip1) / slot_len)) % self.N_SLOTS
             # Geometric (survey) separation of the two rings at this
             # encounter, in beam 1's frame. Beam-2 survey is rotated 180 deg
             # about the vertical (X,Z -> -X,-Z), then the SIGNED horizontal
@@ -354,8 +353,7 @@ class LHCMultibunchBB:
         return sigma_x, sigma_y
 
     def _update_opposing(self, bb_dict, mbtw_other, slots_other,
-                         marker_names_other, geom, target_is_b2,
-                         sigmas=None):
+                         marker_names_other, geom, sigmas=None):
         """Write the opposing beam's per-bunch orbit + geometric survey
         separation into the beam-beam elements, in the frame of the line that
         holds them.
@@ -363,8 +361,7 @@ class LHCMultibunchBB:
         Between the two (opposite-parity) beam lines x flips and y does not.
         Matching TRAIN/pytrain (beam1 sees the opponent at co - sep, beam2 at
         co + sep), and accounting for the beam-2 line x-flip, the survey
-        separation enters as ``-sep_x`` in x for BOTH beams, and as ``-sep_y``
-        (beam 1) / ``+sep_y`` (beam 2) in y (``sep_y`` is ~0 for the LHC)."""
+        separation enters as ``-sep_x`` in x for BOTH beams."""
         # mbtw['x', names] resolves the marker rows once and slices the
         # numpy columns of all bunch tables (fast multi-element access)
         xs = -mbtw_other['x', marker_names_other]
@@ -375,7 +372,6 @@ class LHCMultibunchBB:
         # ring for part of the bunches). The elements handle this via their
         # `zeta_period` (set in install_bb), which makes the pairing periodic
         # in the bunch-label axis.
-        y_sep_sign = 1.0 if target_is_b2 else -1.0
         # one reusable Particles object (same zeta/weight for all encounters)
         p = xt.Particles(p0c=self.p0c, mass0=xt.PROTON_MASS_EV, q0=1.0,
                          x=np.zeros(len(zeta_other)),
@@ -383,7 +379,7 @@ class LHCMultibunchBB:
                          zeta=zeta_other, weight=self.bunch_intensity)
         for j, name in enumerate(self.enc_names):
             p.x[:] = xs[:, j] - geom[name]['sep_x']
-            p.y[:] = ys[:, j] + y_sep_sign * geom[name]['sep_y']
+            p.y[:] = ys[:, j] - geom[name]['sep_y']
             kw = {}
             if sigmas is not None:
                 kw = dict(sigma_x=sigmas[0][:, j], sigma_y=sigmas[1][:, j])
@@ -431,10 +427,10 @@ class LHCMultibunchBB:
                     own_is_b2=True, gamma0=gamma0)
             self._update_opposing(bb_b1, mbtw_b2, slots_b2,
                                   self.marker_names_b2, geom,
-                                  target_is_b2=False, sigmas=sig_b1)
+                                  sigmas=sig_b1)
             self._update_opposing(bb_b2, mbtw_b1, slots_b1,
                                   self.marker_names_b1, geom,
-                                  target_is_b2=True, sigmas=sig_b2)
+                                  sigmas=sig_b2)
             if show_progress:
                 print(f'  iteration {it}: '
                       f'B1 qx spread {np.ptp(mbtw_b1.qx):.2e}, '
