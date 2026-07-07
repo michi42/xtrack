@@ -313,9 +313,15 @@ class LHCMultibunchBB:
             places.append(env.place(elname, bb, at=marker_name(name, mirror)))
             names.append((name, elname))
         line.insert(places)
+        # 'beambeam_scale' knob scaling the strength of all lenses of this
+        # line (as in the xfields beam-beam config tools), e.g. for footprints
+        # with linear rescale on the beam-beam strength
+        line.vars['beambeam_scale'] = 1.0
+        for name, elname in names:
+            line.element_refs[elname].scale_strength = line.vars['beambeam_scale']
         return {name: line[elname] for name, elname in names}
 
-    def _effective_sigmas(self, mbtw_other, slots_other, marker_names_other,
+    def effective_sigmas(self, mbtw_other, slots_other, marker_names_other,
                           mbtw_own, slots_own, marker_names_own, geom,
                           own_is_b2, gamma0):
         """Per-encounter effective (convolved) sizes from the LIVE per-bunch
@@ -352,7 +358,7 @@ class LHCMultibunchBB:
             sigma_y[:, j] = np.sqrt(sig_oth_y[:, j] ** 2 + sw_y ** 2)
         return sigma_x, sigma_y
 
-    def _update_opposing(self, bb_dict, mbtw_other, slots_other,
+    def update_opposing(self, bb_dict, mbtw_other, slots_other,
                          marker_names_other, geom, sigmas=None):
         """Write the opposing beam's per-bunch orbit + geometric survey
         separation into the beam-beam elements, in the frame of the line that
@@ -417,18 +423,18 @@ class LHCMultibunchBB:
                 show_progress=show_progress)
             sig_b1 = sig_b2 = None
             if dynamic_beta:
-                sig_b1 = self._effective_sigmas(
+                sig_b1 = self.effective_sigmas(
                     mbtw_b2, slots_b2, self.marker_names_b2,
                     mbtw_b1, slots_b1, self.marker_names_b1, geom,
                     own_is_b2=False, gamma0=gamma0)
-                sig_b2 = self._effective_sigmas(
+                sig_b2 = self.effective_sigmas(
                     mbtw_b1, slots_b1, self.marker_names_b1,
                     mbtw_b2, slots_b2, self.marker_names_b2, geom,
                     own_is_b2=True, gamma0=gamma0)
-            self._update_opposing(bb_b1, mbtw_b2, slots_b2,
+            self.update_opposing(bb_b1, mbtw_b2, slots_b2,
                                   self.marker_names_b2, geom,
                                   sigmas=sig_b1)
-            self._update_opposing(bb_b2, mbtw_b1, slots_b1,
+            self.update_opposing(bb_b2, mbtw_b1, slots_b1,
                                   self.marker_names_b1, geom,
                                   sigmas=sig_b2)
             if show_progress:
