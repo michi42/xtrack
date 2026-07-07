@@ -27,7 +27,7 @@ import lhc_mb_common as mb
 sim = mb.LHCMultibunchBB.collision()
 
 N_ITER = int(os.environ.get('LHC_NITER', '3'))
-ALL_BUNCHES = os.environ.get('LHC_ALL', '1') == '1'  # False -> bounded subset
+ALL_BUNCHES = os.environ.get('LHC_ALL', '0') == '1'  # False -> bounded subset
 WINDOW = int(os.environ.get('LHC_WINDOW', '48'))
 
 # ----------------------------------------------------------------------------
