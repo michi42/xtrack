@@ -5,7 +5,8 @@ import xobjects as xo
 
 np.random.seed(12345)
 
-sigma_z = 2e-2
+sigma_z = 2e-2 # triggers non-linear matching
+# sigma_z = 2e-3 # triggers linear matching
 
 env = xt.load(['../../test_data/sps_thick/sps.seq',
                 '../../test_data/sps_thick/lhc_q20.str'])
