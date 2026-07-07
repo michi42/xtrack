@@ -21,14 +21,10 @@ elements instead of ~13000.
 import os
 import time
 import matplotlib.pyplot as plt
-import xobjects as xo
 
 import lhc_mb_common as mb
 
-omp = os.environ.get('LHC_OMP', 'serial')
-sim = mb.LHCMultibunchBB.injection(context=(
-    xo.ContextCpu() if omp == 'serial'
-    else xo.ContextCpu(omp_num_threads='auto' if omp == 'auto' else int(omp))))
+sim = mb.LHCMultibunchBB.injection()
 
 N_ITER = int(os.environ.get('LHC_NITER', '3'))
 ALL_BUNCHES = os.environ.get('LHC_ALL', '1') == '1'  # False -> bounded subset

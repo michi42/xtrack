@@ -23,14 +23,10 @@ import os
 import time
 import numpy as np
 import matplotlib.pyplot as plt
-import xobjects as xo
 
 import lhc_mb_common as mb
 
-omp = os.environ.get('LHC_OMP', 'serial')
-sim = mb.LHCMultibunchBB.collision(context=(
-    xo.ContextCpu() if omp == 'serial'
-    else xo.ContextCpu(omp_num_threads='auto' if omp == 'auto' else int(omp))))
+sim = mb.LHCMultibunchBB.collision()
 
 N_ITER = int(os.environ.get('LHC_NITER', '4'))
 ALL_BUNCHES = os.environ.get('LHC_ALL', '1') == '1'
