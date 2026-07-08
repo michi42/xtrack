@@ -153,7 +153,7 @@ for sl, label in family:
         nemitt_x=sim.nemitt, nemitt_y=sim.nemitt,
         r_range=(0.3, 6), theta_range=(0.15, np.pi / 2 - 0.15),
         freeze_longitudinal=True, zeta0=sl * sim.ZETA_PER_SLOT,
-        linear_rescale_on_knobs=[xt.LinearRescale(knob_name='beambeam_scale', v0=0.0, dv=0.15)])
+        linear_rescale_on_knobs=[xt.LinearRescale(knob_name='beambeam_scale', v0=0.0, dv=0.1)])
     footprints[sl] = dict(label=label, qx=fp.qx, qy=fp.qy)
     print(f'  slot {sl:4d} ({label:14s}): {time.time() - t0:.1f} s  '
           f'qx [{fp.qx.min():.4f}, {fp.qx.max():.4f}]')
