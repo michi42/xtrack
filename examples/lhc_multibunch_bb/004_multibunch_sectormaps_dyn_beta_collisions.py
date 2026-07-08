@@ -50,8 +50,6 @@ N_ITER = int(os.environ.get('LHC_NITER', '3'))
 env, line_b1, line_b2 = sim.load()
 slot_len = line_b1.get_length() / sim.N_SLOTS
 b_h_dist = slot_len / 2.0
-gamma0 = line_b1.particle_ref.gamma0[0]
-beta0 = line_b1.particle_ref.beta0[0]
 
 sim.install_markers(line_b1, mirror=False, b_h_dist=b_h_dist)
 sim.install_markers(line_b2, mirror=True, b_h_dist=b_h_dist)
@@ -70,8 +68,8 @@ scheme_b1, scheme_b2 = mb.load_scheme()
 slots_b1, slots_b2 = mb.all_filled_slots(scheme_b1, scheme_b2)
 print(f'  populated bunches: B1 = {len(slots_b1)}, B2 = {len(slots_b2)}')
 
-bb_b1 = sim.install_bb(red_b1, False, geom, len(slots_b2), gamma0, beta0)
-bb_b2 = sim.install_bb(red_b2, True, geom, len(slots_b1), gamma0, beta0)
+bb_b1 = sim.install_bb(red_b1, False, len(slots_b2))
+bb_b2 = sim.install_bb(red_b2, True, len(slots_b1))
 
 # ----------------------------------------------------------------------------
 # Solve with static sizes, then with dynamic beta
@@ -83,7 +81,7 @@ for label, dynamic_beta in (('static', False), ('dynamic beta', True)):
     # twiss_mode='fast' in both runs (dynamic_beta forces it anyway) so the
     # returned tables carry the per-bunch optics and the cost is comparable
     mbtw_b1, mbtw_b2 = sim.solve_self_consistent(
-        red_b1, red_b2, bb_b1, bb_b2, slots_b1, slots_b2, geom,
+        red_b1, red_b2, bb_b1, bb_b2, slots_b1, slots_b2,
         n_iter=N_ITER, twiss_mode='fast', dynamic_beta=dynamic_beta)
     print(f'  solve time ({N_ITER} iters): {time.time() - t0:.1f} s')
     results[label] = (mbtw_b1, mbtw_b2)

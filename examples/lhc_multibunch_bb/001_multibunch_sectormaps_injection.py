@@ -36,8 +36,6 @@ WINDOW = int(os.environ.get('LHC_WINDOW', '48'))
 env, line_b1, line_b2 = sim.load()
 slot_len = line_b1.get_length() / sim.N_SLOTS
 b_h_dist = slot_len / 2.0
-gamma0 = line_b1.particle_ref.gamma0[0]
-beta0 = line_b1.particle_ref.beta0[0]
 
 sim.install_markers(line_b1, mirror=False, b_h_dist=b_h_dist)
 sim.install_markers(line_b2, mirror=True, b_h_dist=b_h_dist)
@@ -74,17 +72,17 @@ scheme_b1, scheme_b2 = mb.load_scheme()
 if ALL_BUNCHES:
     slots_b1, slots_b2 = mb.all_filled_slots(scheme_b1, scheme_b2)
 else:
-    slots_b1, slots_b2 = sim.windowed_slots(scheme_b1, scheme_b2, geom, WINDOW)
+    slots_b1, slots_b2 = sim.windowed_slots(scheme_b1, scheme_b2, WINDOW)
 print(f'  populated bunches: B1 = {len(slots_b1)}, B2 = {len(slots_b2)}')
 
 # Install beam-beam elements in the reduced lines (markers were kept)
-bb_b1 = sim.install_bb(red_b1, False, geom, len(slots_b2), gamma0, beta0)
-bb_b2 = sim.install_bb(red_b2, True, geom, len(slots_b1), gamma0, beta0)
+bb_b1 = sim.install_bb(red_b1, False, len(slots_b2))
+bb_b2 = sim.install_bb(red_b2, True, len(slots_b1))
 
 print('Self-consistent solve on the reduced (second-order-map) lines:')
 t0 = time.time()
 mbtw_b1, mbtw_b2 = sim.solve_self_consistent(
-    red_b1, red_b2, bb_b1, bb_b2, slots_b1, slots_b2, geom, n_iter=N_ITER)
+    red_b1, red_b2, bb_b1, bb_b2, slots_b1, slots_b2, n_iter=N_ITER)
 print(f'  solve time ({len(slots_b1)}+{len(slots_b2)} bunches, {N_ITER} iters): {time.time() - t0:.1f} s')
 
 # Optional: per-bunch optics (dynamic beta*) and global quantities (tunes, chromaticity, coupling)

@@ -59,8 +59,6 @@ sim = mb.LHCMultibunchBB.collision(context=(
 env, line_b1, line_b2 = sim.load()
 slot_len = line_b1.get_length() / sim.N_SLOTS
 b_h_dist = slot_len / 2.0
-gamma0 = line_b1.particle_ref.gamma0[0]
-beta0 = line_b1.particle_ref.beta0[0]
 
 sim.install_markers(line_b1, mirror=False, b_h_dist=b_h_dist)
 sim.install_markers(line_b2, mirror=True, b_h_dist=b_h_dist)
@@ -77,8 +75,8 @@ scheme_b1, scheme_b2 = mb.load_scheme()
 slots_b1, slots_b2 = mb.all_filled_slots(scheme_b1, scheme_b2)
 print(f'  populated bunches: B1 = {len(slots_b1)}, B2 = {len(slots_b2)}')
 
-bb_b1 = sim.install_bb(red_b1, False, geom, len(slots_b2), gamma0, beta0)
-bb_b2 = sim.install_bb(red_b2, True, geom, len(slots_b1), gamma0, beta0)
+bb_b1 = sim.install_bb(red_b1, False, len(slots_b2))
+bb_b2 = sim.install_bb(red_b2, True, len(slots_b1))
 
 # ----------------------------------------------------------------------------
 # 1) Self-consistent solve: 2 iterations orbit-only, 2 with dynamic beta
@@ -86,10 +84,10 @@ bb_b2 = sim.install_bb(red_b2, True, geom, len(slots_b1), gamma0, beta0)
 print('Self-consistent solve (2 iterations fast_orbit):')
 t0 = time.time()
 sim.solve_self_consistent(red_b1, red_b2, bb_b1, bb_b2,
-                          slots_b1, slots_b2, geom, n_iter=2)
+                          slots_b1, slots_b2, n_iter=2)
 print('Self-consistent solve (2 more iterations with dynamic beta):')
 mbtw_b1, mbtw_b2 = sim.solve_self_consistent(
-    red_b1, red_b2, bb_b1, bb_b2, slots_b1, slots_b2, geom, n_iter=2,
+    red_b1, red_b2, bb_b1, bb_b2, slots_b1, slots_b2, n_iter=2,
     dynamic_beta=True)
 print(f'  total solve time: {time.time() - t0:.1f} s')
 
@@ -97,18 +95,11 @@ print(f'  total solve time: {time.time() - t0:.1f} s')
 # 2) Transfer the converged solution to the full thick lattice of beam 1
 # ----------------------------------------------------------------------------
 print('Installing the converged lenses on the full thick lattice (B1)...')
-bb_thick_b1 = sim.install_bb(line_b1, False, geom, len(slots_b2),
-                             gamma0, beta0)
-sizes_b2 = sim.effective_sigmas(mbtw_b2, sim.marker_names_b2, gamma0)
-sizes_b1 = sim.effective_sigmas(mbtw_b1, sim.marker_names_b1, gamma0)
+bb_thick_b1 = sim.install_bb(line_b1, False, len(slots_b2))
+sizes_b2 = sim.compute_sigmas(mbtw_b2, sim.marker_names_b2)
+sizes_b1 = sim.compute_sigmas(mbtw_b1, sim.marker_names_b1)
 sim.update_opposing(bb_thick_b1, mbtw_b2, slots_b2, sim.marker_names_b2,
-                     geom, sigmas_other=sizes_b2, sigmas_own=sizes_b1)
-
-# incoherent footprints: individual particles see the field of the opposing
-# bunches with their OWN sizes (weak-strong), not the convolved coherent
-# kick used for the rigid-bunch closed solution
-for bb in bb_thick_b1.values():
-    bb.coherent = False
+                    sigmas_other=sizes_b2, sigmas_own=sizes_b1)
 
 zeta_b1 = np.array(slots_b1) * sim.ZETA_PER_SLOT
 
@@ -141,6 +132,14 @@ idx_fam = np.searchsorted(slots_b1, [sl for sl, _ in family])
 dq_check = mb.wrap_frac_tune(mb_thick.qx - np.asarray(mbtw_b1.qx)[idx_fam])
 print(f'  transfer check (thick vs sector maps, family bunches): '
       f'max |dqx| = {np.max(np.abs(dq_check)):.2e}')
+
+# incoherent footprints: individual particles see the field of the opposing
+# bunches with their OWN sizes (weak-strong), not the convolved coherent
+# kick used for the rigid-bunch closed solution. NOTE: switched only AFTER
+# the transfer check above, which must reproduce the (coherent) sector-map
+# solution.
+for bb in bb_thick_b1.values():
+    bb.coherent = False
 
 print('Footprints on the thick lattice:')
 footprints = {}

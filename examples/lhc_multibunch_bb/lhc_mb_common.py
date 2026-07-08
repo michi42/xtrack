@@ -105,9 +105,14 @@ class LHCMultibunchBB:
         if nparasitic is None:
             nparasitic = int(os.environ.get('LHC_NPAR', '45'))
         self.p0c = p0c
+        energy = np.sqrt(p0c**2 + xt.PROTON_MASS_EV**2)
+        self.gamma0 = energy / xt.PROTON_MASS_EV
+        self.beta0 = p0c / energy
         self.bunch_intensity = bunch_intensity
         self.nemitt = nemitt
         self.optics_file = optics_file
+        self.geom = None    # set by compute_geometry
+        self.meta = None
         self.ips = list(ips)
         self.nparasitic = nparasitic
         self.enc_names = [n for n, _, _ in self.encounter_specs()]
@@ -249,16 +254,18 @@ class LHCMultibunchBB:
             )
         meta = dict(bare_qx_b1=float(tw1.qx), bare_qy_b1=float(tw1.qy),
                     bare_qx_b2=float(tw2.qx), bare_qy_b2=float(tw2.qy))
+        self.geom = geom
+        self.meta = meta
         return geom, meta
 
     # ------------------------------------------------------------------
     # Filling scheme
     # ------------------------------------------------------------------
-    def windowed_slots(self, scheme_b1, scheme_b2, geom, window):
+    def windowed_slots(self, scheme_b1, scheme_b2, window):
         """A bounded subset: a reference window plus the windows it collides
         with at every distinct head-on offset (so all IPs get realistic
         pairings)."""
-        ho_offsets = sorted({geom[f'bb_ip{ip}_ho']['offset']
+        ho_offsets = sorted({self.geom[f'bb_ip{ip}_ho']['offset']
                              for ip in self.ips})
         # Use the longest contiguous filled run of beam 1 as the reference
         # window (the filling is made of batches separated by gaps, so a
@@ -288,14 +295,14 @@ class LHCMultibunchBB:
     # ------------------------------------------------------------------
     # Beam-beam element installation and self-consistent solve
     # ------------------------------------------------------------------
-    def install_bb(self, line, mirror, geom, n_other, gamma0, beta0):
+    def install_bb(self, line, mirror, n_other):
         """Install one beam-beam element per encounter.
         Returns {enc_name: element}."""
         env = line.env
         places = []
         names = []
         for name, ip, sn in self.encounter_specs():
-            e = geom[name]
+            e = self.geom[name]
             # beam1 pairs b2 = b1 + offset (zeta_offset=+offset);
             # beam2 pairs b1 = b2 - offset (zeta_offset=-offset)
             zoff = (-e['offset'] if mirror else e['offset']) \
@@ -311,14 +318,14 @@ class LHCMultibunchBB:
                 # ring is periodic in slots; encounter offsets are stored mod
                 # N_SLOTS, so the pairing must wrap around the ring
                 zeta_period=self.N_SLOTS * self.ZETA_PER_SLOT,
-                other_beam_q0=1.0, other_beam_beta0=beta0,
+                other_beam_q0=1.0, other_beam_beta0=self.beta0,
                 coherent=True,
-                sigma_x=np.sqrt(e[f'betx_{own}'] * self.nemitt / gamma0),
-                sigma_y=np.sqrt(e[f'bety_{own}'] * self.nemitt / gamma0),
+                sigma_x=np.sqrt(e[f'betx_{own}'] * self.nemitt / self.gamma0),
+                sigma_y=np.sqrt(e[f'bety_{own}'] * self.nemitt / self.gamma0),
                 other_beam_sigma_x=np.sqrt(
-                    e[f'betx_{oth}'] * self.nemitt / gamma0),
+                    e[f'betx_{oth}'] * self.nemitt / self.gamma0),
                 other_beam_sigma_y=np.sqrt(
-                    e[f'bety_{oth}'] * self.nemitt / gamma0),
+                    e[f'bety_{oth}'] * self.nemitt / self.gamma0),
                 _context=line._context)
             elname = marker_name(name, mirror) + '_bb'
             places.append(env.place(elname, bb, at=marker_name(name, mirror)))
@@ -332,21 +339,21 @@ class LHCMultibunchBB:
             line.element_refs[elname].scale_strength = line.vars['beambeam_scale']
         return {name: line[elname] for name, elname in names}
 
-    def effective_sigmas(self, mbtw_other, marker_names_other, gamma0):
-        """Per-encounter transverse sizes of the opposing bunches from their
+    def compute_sigmas(self, mbtw, marker_names):
+        """Per-encounter transverse sizes of a beam's bunches from their
         LIVE per-bunch beta functions (dynamic beta). Returns (sigma_x,
-        sigma_y), each of shape (n_other, n_encounters). The convolution
-        with this beam's own size is done inside the elements
+        sigma_y), each of shape (n_bunches, n_encounters). The convolution
+        of the two beams' sizes is done inside the elements
         (``coherent=True``)."""
-        eg = self.nemitt / gamma0    # same convention as the static case
+        eg = self.nemitt / self.gamma0   # same convention as the static case
         # mbtw['betx', names] resolves the marker rows once and slices the
         # numpy columns of all bunch tables (fast multi-element access)
-        sigma_x = np.sqrt(mbtw_other['betx', marker_names_other] * eg)
-        sigma_y = np.sqrt(mbtw_other['bety', marker_names_other] * eg)
+        sigma_x = np.sqrt(mbtw['betx', marker_names] * eg)
+        sigma_y = np.sqrt(mbtw['bety', marker_names] * eg)
         return sigma_x, sigma_y
 
     def update_opposing(self, bb_dict, mbtw_other, slots_other,
-                         marker_names_other, geom, sigmas_other=None,
+                         marker_names_other, sigmas_other=None,
                          sigmas_own=None):
         """Write the opposing beam's per-bunch orbit + geometric survey
         separation into the beam-beam elements, in the frame of the line that
@@ -378,8 +385,8 @@ class LHCMultibunchBB:
                          y=np.zeros(len(zeta_other)),
                          zeta=zeta_other, weight=self.bunch_intensity)
         for j, name in enumerate(self.enc_names):
-            p.x[:] = xs[:, j] - geom[name]['sep_x']
-            p.y[:] = ys[:, j] - geom[name]['sep_y']
+            p.x[:] = xs[:, j] - self.geom[name]['sep_x']
+            p.y[:] = ys[:, j] - self.geom[name]['sep_y']
             kw = {}
             if sigmas_other is not None:
                 kw = dict(other_beam_sigma_x=sigmas_other[0][:, j],
@@ -391,7 +398,7 @@ class LHCMultibunchBB:
             bb.update_from_other_beam(p, **kw)
 
     def solve_self_consistent(self, line_b1, line_b2, bb_b1, bb_b2,
-                              slots_b1, slots_b2, geom, n_iter=3, chrom=False,
+                              slots_b1, slots_b2, n_iter=3, chrom=False,
                               twiss_mode='fast_orbit', show_progress=True,
                               dynamic_beta=False):
         """Iterate twiss_multibunch on both beams, feeding each beam's
@@ -409,7 +416,6 @@ class LHCMultibunchBB:
         twiss, so mode='fast' is forced."""
         if dynamic_beta and twiss_mode == 'fast_orbit':
             twiss_mode = 'fast'
-        gamma0 = line_b1.particle_ref.gamma0[0]
         zeta_b1 = np.array(slots_b1) * self.ZETA_PER_SLOT
         zeta_b2 = np.array(slots_b2) * self.ZETA_PER_SLOT
         mbtw_b1 = mbtw_b2 = None
@@ -425,15 +431,15 @@ class LHCMultibunchBB:
                 # per-bunch sizes of each beam at ITS OWN markers: used both
                 # as the opposing-beam sizes of the other beam's elements and
                 # (bunch-averaged) as the own sizes of this beam's elements
-                sizes_b1 = self.effective_sigmas(mbtw_b1,
-                                                 self.marker_names_b1, gamma0)
-                sizes_b2 = self.effective_sigmas(mbtw_b2,
-                                                 self.marker_names_b2, gamma0)
+                sizes_b1 = self.compute_sigmas(mbtw_b1,
+                                               self.marker_names_b1)
+                sizes_b2 = self.compute_sigmas(mbtw_b2,
+                                               self.marker_names_b2)
             self.update_opposing(bb_b1, mbtw_b2, slots_b2,
-                                  self.marker_names_b2, geom,
+                                  self.marker_names_b2,
                                   sigmas_other=sizes_b2, sigmas_own=sizes_b1)
             self.update_opposing(bb_b2, mbtw_b1, slots_b1,
-                                  self.marker_names_b1, geom,
+                                  self.marker_names_b1,
                                   sigmas_other=sizes_b1, sigmas_own=sizes_b2)
             if show_progress:
                 print(f'  iteration {it}: '
