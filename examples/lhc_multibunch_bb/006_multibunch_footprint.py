@@ -174,8 +174,7 @@ for k, (sl, _) in zip(pos_in_train, family):
     ax.plot(fp['qx'].T, fp['qy'].T, color=color, lw=1)
 ax.set_xlabel(r'$q_x$')
 ax.set_ylabel(r'$q_y$')
-ax.set_title('Per-bunch tune footprints, LHC collision (head-on + BBLR,\n'
-             'multi-bunch self-consistent closed solution, dynamic beta)')
+ax.set_title('Per-bunch tune footprints, LHC collision (head-on + BBLR)')
 fig.colorbar(ScalarMappable(norm=norm, cmap=cmap), ax=ax,
              label='bunch position in train')
 plt.tight_layout()
