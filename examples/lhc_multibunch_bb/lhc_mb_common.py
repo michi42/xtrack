@@ -27,9 +27,10 @@ Model (following pytrain / TRAIN):
   beam-2 bunch ``b2 = b1 + offset`` with
   ``offset = round(2 * (s_marker - s_IP1) / slot_len)`` (mod n_slots) -> 0 at
   IP1 and IP5, ~891 at IP2, ~2670 at IP8.
-* Convolved (coherent) size: ``sigma = sqrt(eps_n * (beta_b1 + beta_b2) / gamma)``
-  reproduced with ``other_beam_betx = beta_b1 + beta_b2`` and normalized
-  emittance ``eps_n``.
+* Coherent (rigid-bunch) kick with the convolved pair size:
+  ``sigma_eff = sqrt(eps_n * (beta_b1 + beta_b2) / gamma)``, obtained by the
+  elements (``coherent=True``) from each beam's own sizes
+  ``sigma = sqrt(eps_n * beta / gamma)``.
 * Beam separation = closed-orbit difference (crossing AND separation bumps, from
   the live twiss) PLUS the geometric survey separation of the two rings. The
   latter is ~0 in the common vacuum chamber and rises through the recombination
@@ -240,8 +241,10 @@ class LHCMultibunchBB:
             geom[name] = dict(
                 ip=ip,
                 offset=offset,
-                betx=float(tw1['betx', n1] + tw2['betx', n2]),
-                bety=float(tw1['bety', n1] + tw2['bety', n2]),
+                betx_b1=float(tw1['betx', n1]),
+                bety_b1=float(tw1['bety', n1]),
+                betx_b2=float(tw2['betx', n2]),
+                bety_b2=float(tw2['bety', n2]),
                 sep_x=sep_x, sep_y=sep_y,
             )
         meta = dict(bare_qx_b1=float(tw1.qx), bare_qy_b1=float(tw1.qy),
@@ -297,6 +300,11 @@ class LHCMultibunchBB:
             # beam2 pairs b1 = b2 - offset (zeta_offset=-offset)
             zoff = (-e['offset'] if mirror else e['offset']) \
                 * self.ZETA_PER_SLOT
+            # coherent (rigid-bunch) kick: the element convolves this beam's
+            # own size with each opposing bunch's size, sigma_eff^2 =
+            # sigma_own^2 + sigma_other^2 (statically equivalent to the
+            # previous (beta_b1 + beta_b2) * nemitt / gamma0)
+            own, oth = ('b2', 'b1') if mirror else ('b1', 'b2')
             bb = xf.BeamBeamBiGaussianMultibunch2D(
                 num_bunches=max(n_other, 1),
                 zeta_offset=zoff, zeta_match_tol=0.4 * self.ZETA_PER_SLOT,
@@ -304,10 +312,13 @@ class LHCMultibunchBB:
                 # N_SLOTS, so the pairing must wrap around the ring
                 zeta_period=self.N_SLOTS * self.ZETA_PER_SLOT,
                 other_beam_q0=1.0, other_beam_beta0=beta0,
-                # static effective (convolved) size of the colliding pair:
-                # sigma^2 = (beta_b1 + beta_b2) * nemitt / gamma0
-                other_beam_sigma_x=np.sqrt(e['betx'] * self.nemitt / gamma0),
-                other_beam_sigma_y=np.sqrt(e['bety'] * self.nemitt / gamma0),
+                coherent=True,
+                sigma_x=np.sqrt(e[f'betx_{own}'] * self.nemitt / gamma0),
+                sigma_y=np.sqrt(e[f'bety_{own}'] * self.nemitt / gamma0),
+                other_beam_sigma_x=np.sqrt(
+                    e[f'betx_{oth}'] * self.nemitt / gamma0),
+                other_beam_sigma_y=np.sqrt(
+                    e[f'bety_{oth}'] * self.nemitt / gamma0),
                 _context=line._context)
             elname = marker_name(name, mirror) + '_bb'
             places.append(env.place(elname, bb, at=marker_name(name, mirror)))
@@ -321,48 +332,31 @@ class LHCMultibunchBB:
             line.element_refs[elname].scale_strength = line.vars['beambeam_scale']
         return {name: line[elname] for name, elname in names}
 
-    def effective_sigmas(self, mbtw_other, slots_other, marker_names_other,
-                          mbtw_own, slots_own, marker_names_own, geom,
-                          own_is_b2, gamma0):
-        """Per-encounter effective (convolved) sizes from the LIVE per-bunch
-        beta functions of both beams (dynamic beta): the size of each
-        opposing bunch at the encounter is convolved with that of its
-        (unique) weak partner bunch of this beam, ``sigma_eff^2 =
-        sigma_other^2 + sigma_own^2``. Returns (sigma_x, sigma_y), each of
-        shape (n_other, n_encounters)."""
+    def effective_sigmas(self, mbtw_other, marker_names_other, gamma0):
+        """Per-encounter transverse sizes of the opposing bunches from their
+        LIVE per-bunch beta functions (dynamic beta). Returns (sigma_x,
+        sigma_y), each of shape (n_other, n_encounters). The convolution
+        with this beam's own size is done inside the elements
+        (``coherent=True``)."""
         eg = self.nemitt / gamma0    # same convention as the static case
         # mbtw['betx', names] resolves the marker rows once and slices the
         # numpy columns of all bunch tables (fast multi-element access)
-        sig_oth_x = np.sqrt(mbtw_other['betx', marker_names_other] * eg)
-        sig_oth_y = np.sqrt(mbtw_other['bety', marker_names_other] * eg)
-        sig_own_x = np.sqrt(mbtw_own['betx', marker_names_own] * eg)
-        sig_own_y = np.sqrt(mbtw_own['bety', marker_names_own] * eg)
-        slot_to_idx = {int(ss): ii for ii, ss in enumerate(slots_own)}
-        slots_other = np.asarray(slots_other)
-        sigma_x = np.empty_like(sig_oth_x)
-        sigma_y = np.empty_like(sig_oth_y)
-        for j, name in enumerate(self.enc_names):
-            # opposing bunch at slot s meets this beam's bunch at slot
-            # s - zeta_offset (the pairing is bijective); the value for
-            # opposing bunches without a filled partner is irrelevant (they
-            # are never looked up at this encounter) -> mean as filler
-            off = geom[name]['offset']
-            zoff_slots = -off if own_is_b2 else off
-            partner = (slots_other - zoff_slots) % self.N_SLOTS
-            idx = np.array([slot_to_idx.get(int(ss), -1) for ss in partner])
-            sw_x = sig_own_x[np.maximum(idx, 0), j]
-            sw_y = sig_own_y[np.maximum(idx, 0), j]
-            sw_x[idx < 0] = sig_own_x[:, j].mean()
-            sw_y[idx < 0] = sig_own_y[:, j].mean()
-            sigma_x[:, j] = np.sqrt(sig_oth_x[:, j] ** 2 + sw_x ** 2)
-            sigma_y[:, j] = np.sqrt(sig_oth_y[:, j] ** 2 + sw_y ** 2)
+        sigma_x = np.sqrt(mbtw_other['betx', marker_names_other] * eg)
+        sigma_y = np.sqrt(mbtw_other['bety', marker_names_other] * eg)
         return sigma_x, sigma_y
 
     def update_opposing(self, bb_dict, mbtw_other, slots_other,
-                         marker_names_other, geom, sigmas=None):
+                         marker_names_other, geom, sigmas_other=None,
+                         sigmas_own=None):
         """Write the opposing beam's per-bunch orbit + geometric survey
         separation into the beam-beam elements, in the frame of the line that
-        holds them.
+        holds them; optionally also update the sizes (dynamic beta):
+        ``sigmas_other`` = the opposing bunches' per-bunch sizes
+        (n_other, n_enc), ``sigmas_own`` = this beam's bunch sizes
+        (n_own, n_enc) -- the elements hold ONE own size per encounter, so
+        the bunch AVERAGE is stored (the bunch-by-bunch resolution enters
+        through the opposing beam's per-bunch sizes of the partner
+        elements).
 
         Between the two (opposite-parity) beam lines x flips and y does not.
         Matching TRAIN/pytrain (beam1 sees the opponent at co - sep, beam2 at
@@ -387,9 +381,14 @@ class LHCMultibunchBB:
             p.x[:] = xs[:, j] - geom[name]['sep_x']
             p.y[:] = ys[:, j] - geom[name]['sep_y']
             kw = {}
-            if sigmas is not None:
-                kw = dict(sigma_x=sigmas[0][:, j], sigma_y=sigmas[1][:, j])
-            bb_dict[name].update_from_other_beam(p, **kw)
+            if sigmas_other is not None:
+                kw = dict(other_beam_sigma_x=sigmas_other[0][:, j],
+                          other_beam_sigma_y=sigmas_other[1][:, j])
+            bb = bb_dict[name]
+            if sigmas_own is not None:
+                bb.sigma_x = sigmas_own[0][:, j].mean()
+                bb.sigma_y = sigmas_own[1][:, j].mean()
+            bb.update_from_other_beam(p, **kw)
 
     def solve_self_consistent(self, line_b1, line_b2, bb_b1, bb_b2,
                               slots_b1, slots_b2, geom, n_iter=3, chrom=False,
@@ -421,22 +420,21 @@ class LHCMultibunchBB:
             mbtw_b2 = line_b2.twiss_multibunch(
                 zeta_bunches=zeta_b2, chrom=chrom, mode=twiss_mode,
                 show_progress=show_progress)
-            sig_b1 = sig_b2 = None
+            sizes_b1 = sizes_b2 = None
             if dynamic_beta:
-                sig_b1 = self.effective_sigmas(
-                    mbtw_b2, slots_b2, self.marker_names_b2,
-                    mbtw_b1, slots_b1, self.marker_names_b1, geom,
-                    own_is_b2=False, gamma0=gamma0)
-                sig_b2 = self.effective_sigmas(
-                    mbtw_b1, slots_b1, self.marker_names_b1,
-                    mbtw_b2, slots_b2, self.marker_names_b2, geom,
-                    own_is_b2=True, gamma0=gamma0)
+                # per-bunch sizes of each beam at ITS OWN markers: used both
+                # as the opposing-beam sizes of the other beam's elements and
+                # (bunch-averaged) as the own sizes of this beam's elements
+                sizes_b1 = self.effective_sigmas(mbtw_b1,
+                                                 self.marker_names_b1, gamma0)
+                sizes_b2 = self.effective_sigmas(mbtw_b2,
+                                                 self.marker_names_b2, gamma0)
             self.update_opposing(bb_b1, mbtw_b2, slots_b2,
                                   self.marker_names_b2, geom,
-                                  sigmas=sig_b1)
+                                  sigmas_other=sizes_b2, sigmas_own=sizes_b1)
             self.update_opposing(bb_b2, mbtw_b1, slots_b1,
                                   self.marker_names_b1, geom,
-                                  sigmas=sig_b2)
+                                  sigmas_other=sizes_b1, sigmas_own=sizes_b2)
             if show_progress:
                 print(f'  iteration {it}: '
                       f'B1 qx spread {np.ptp(mbtw_b1.qx):.2e}, '

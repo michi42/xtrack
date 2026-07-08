@@ -15,8 +15,9 @@ regenerated with the scripts in the same directory).
 Model (following pytrain / TRAIN): long-range encounter ``n`` sits at
 ``n * b_h_dist`` from the IP (``b_h_dist`` = half a 25 ns slot); beam-1 bunch
 ``b1`` meets beam-2 bunch ``b1 + offset`` with ``offset = round(2 * (s -
-s_IP1) / slot_len) mod N_SLOTS``; the coherent kick uses the convolved size
-``sigma^2 = (beta_b1 + beta_b2) * nemitt / gamma0``; the beam separation is the
+s_IP1) / slot_len) mod N_SLOTS``; the coherent (rigid-bunch) kick uses the
+convolved pair size (``coherent=True`` elements convolve each beam's own
+``sigma = sqrt(beta * nemitt / gamma0)``); the beam separation is the
 closed-orbit difference plus the SIGNED geometric survey separation of the
 two rings. Bunches are labelled by ``zeta = slot * ZETA_PER_SLOT`` and the
 elements pair them via ``zeta_offset``/``zeta_period``.
@@ -154,8 +155,10 @@ def _compute_geometry(line_b1, line_b2, slot_len):
         xsign = 1.0 if abs(ang) <= np.pi / 2 else -1.0
         geom[name] = dict(
             offset=offset,
-            betx=float(tw1['betx', n1] + tw2['betx', n2]),
-            bety=float(tw1['bety', n1] + tw2['bety', n2]),
+            betx_b1=float(tw1['betx', n1]),
+            bety_b1=float(tw1['bety', n1]),
+            betx_b2=float(tw2['betx', n2]),
+            bety_b2=float(tw2['bety', n2]),
             sep_x=float(np.hypot(d[0], d[2]) * xsign),
             sep_y=float(d[1]),
         )
@@ -170,13 +173,19 @@ def _install_bb(line, mirror, geom, n_other, nemitt, gamma0, beta0):
         e = geom[name]
         # beam1 pairs b2 = b1 + offset; beam2 pairs b1 = b2 - offset
         zoff = (-e['offset'] if mirror else e['offset']) * ZETA_PER_SLOT
+        # coherent rigid-bunch kick: the element convolves this beam's own
+        # size with each opposing bunch's size
+        own, oth = ('b2', 'b1') if mirror else ('b1', 'b2')
         bb = xf.BeamBeamBiGaussianMultibunch2D(
             num_bunches=n_other,
             zeta_offset=zoff, zeta_match_tol=0.4 * ZETA_PER_SLOT,
             zeta_period=N_SLOTS * ZETA_PER_SLOT,   # pairing wraps the ring
             other_beam_q0=1.0, other_beam_beta0=beta0,
-            other_beam_sigma_x=np.sqrt(e['betx'] * nemitt / gamma0),
-            other_beam_sigma_y=np.sqrt(e['bety'] * nemitt / gamma0),
+            coherent=True,
+            sigma_x=np.sqrt(e[f'betx_{own}'] * nemitt / gamma0),
+            sigma_y=np.sqrt(e[f'bety_{own}'] * nemitt / gamma0),
+            other_beam_sigma_x=np.sqrt(e[f'betx_{oth}'] * nemitt / gamma0),
+            other_beam_sigma_y=np.sqrt(e[f'bety_{oth}'] * nemitt / gamma0),
             _context=line._context)
         elname = _marker_name(name, mirror) + '_bb'
         places.append(env.place(elname, bb, at=_marker_name(name, mirror)))

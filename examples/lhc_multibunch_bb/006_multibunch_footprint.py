@@ -18,23 +18,24 @@ serial):
    over between the two calls, so this continues the same iteration).
 2. Transfer the converged solution back to the FULL THICK lattice of beam 1:
    the same multi-bunch beam-beam lenses are installed at the (still
-   present) encounter markers and loaded with the final per-bunch orbits and
-   dynamic effective sizes of beam 2.
+   present) encounter markers and loaded with the final per-bunch orbits
+   and dynamic sizes of beam 2, plus the (bunch-averaged) dynamic own sizes
+   of beam 1.
 3. Generate tune footprints on this thick lattice for 12 equidistant
    bunches along the longest train (first and last included), covering the
    PACMAN transition from the train head through the fully-surrounded
    center to the tail. Each footprint tracks particles with ``zeta`` frozen at the
    bunch's slot label, so the multi-bunch lenses apply that bunch's actual
-   encounters (head-on + long-range, around its own closed orbit). The
-   footprints use the linear rescale on the ``beambeam_scale`` knob (bound
-   to the ``scale_strength`` of all lenses at installation, as in the
-   xfields beam-beam config tools): computed at weak beam-beam and
+   encounters (head-on + long-range, around its own closed orbit). Before
+   tracking, the lenses are switched to ``coherent=False``: the footprint
+   particles are INDIVIDUAL protons that see the field of the opposing
+   bunches with their own sizes (incoherent, weak-strong), while the closed
+   solution was obtained with the coherent rigid-bunch (convolved-size)
+   kicks. The footprints use the linear rescale on the ``beambeam_scale``
+   knob (bound to the ``scale_strength`` of all lenses at installation, as
+   in the xfields beam-beam config tools): computed at weak beam-beam and
    extrapolated linearly to full strength, which avoids resonance-distorted
    footprints.
-
-Note: the lenses are coherent rigid-bunch kicks with the CONVOLVED pair
-sizes, so the footprints describe amplitude detuning in this soft-Gaussian
-coherent model (not the incoherent weak-strong footprint).
 """
 
 import os
@@ -98,12 +99,16 @@ print(f'  total solve time: {time.time() - t0:.1f} s')
 print('Installing the converged lenses on the full thick lattice (B1)...')
 bb_thick_b1 = sim.install_bb(line_b1, False, geom, len(slots_b2),
                              gamma0, beta0)
-sig_b1 = sim.effective_sigmas(
-    mbtw_b2, slots_b2, sim.marker_names_b2,
-    mbtw_b1, slots_b1, sim.marker_names_b1, geom,
-    own_is_b2=False, gamma0=gamma0)
+sizes_b2 = sim.effective_sigmas(mbtw_b2, sim.marker_names_b2, gamma0)
+sizes_b1 = sim.effective_sigmas(mbtw_b1, sim.marker_names_b1, gamma0)
 sim.update_opposing(bb_thick_b1, mbtw_b2, slots_b2, sim.marker_names_b2,
-                     geom, sigmas=sig_b1)
+                     geom, sigmas_other=sizes_b2, sigmas_own=sizes_b1)
+
+# incoherent footprints: individual particles see the field of the opposing
+# bunches with their OWN sizes (weak-strong), not the convolved coherent
+# kick used for the rigid-bunch closed solution
+for bb in bb_thick_b1.values():
+    bb.coherent = False
 
 zeta_b1 = np.array(slots_b1) * sim.ZETA_PER_SLOT
 
