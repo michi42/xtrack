@@ -187,6 +187,26 @@ def test_line_xcoll_facade(monkeypatch):
         assert line.collimators is line.xcoll.collimators
 
 
+def test_line_xpart_facade(monkeypatch):
+
+    class FakeXpartLineAPI:
+        def __init__(self, line):
+            self.line = line
+
+    xpart_module = types.ModuleType('xpart')
+    line_tools_module = types.ModuleType('xpart.line_tools')
+    line_tools_module.XpartLineAPI = FakeXpartLineAPI
+    xpart_module.line_tools = line_tools_module
+    monkeypatch.setitem(sys.modules, 'xpart', xpart_module)
+    monkeypatch.setitem(sys.modules, 'xpart.line_tools', line_tools_module)
+
+    line = xt.Line(elements=[], element_names=[])
+
+    assert isinstance(line.xpart, FakeXpartLineAPI)
+    assert line.xpart is line.xpart
+    assert line.xpart.line is line
+
+
 def test_remove_redundant_apertures():
 
     # Lattice:

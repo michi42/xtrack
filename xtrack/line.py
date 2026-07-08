@@ -270,6 +270,7 @@ class Line:
         self._metadata = None
         self._tracker = None
         self._xcoll = None
+        self._xpart = None
 
         self.config = xt.tracker.TrackerConfig()
         self.config.XTRACK_MULTIPOLE_NO_SYNRAD = True
@@ -1790,6 +1791,17 @@ class Line:
             except ImportError as error:
                 raise ImportError("Please install Xcoll to use this feature.") from error
         return self._xcoll
+
+    @property_with_doc_group("Reference Particle and Particle Generation")
+    def xpart(self):
+        """Xpart particle-generation helpers associated with this line."""
+        if self._xpart is None:
+            try:
+                from xpart.line_tools import XpartLineAPI
+                self._xpart = XpartLineAPI(self)
+            except ImportError as error:
+                raise ImportError("Please install Xpart to use this feature.") from error
+        return self._xpart
 
     @property_with_doc_group("Upcoming Deprecations")
     def scattering(self):
