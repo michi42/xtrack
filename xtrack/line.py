@@ -5368,13 +5368,18 @@ class Line:
     def get_line_with_second_order_maps(self, split_at):
 
         '''
-        Return a new lines with segments definded by the elements in `split_at`
+        Return a new line with segments defined by the elements in `split_at`
         replaced by second order maps.
 
         Parameters
         ----------
         split_at : list of str
-            Names of elements at which to split the line.
+            Names of elements at which to split the line. These elements are
+            kept as they are in the new line and are excluded from the maps:
+            each map spans from the exit of one split element to the
+            entrance of the next. Hence also thick and/or nonlinear elements
+            can be preserved exactly by splitting at them (e.g. octupoles,
+            to retain their amplitude detuning).
 
         Returns
         -------
@@ -5383,16 +5388,23 @@ class Line:
         '''
         self._method_incompatible_with_compose()
 
+        missing = set(split_at) - set(self.element_names)
+        if missing:
+            raise ValueError(f'Elements {sorted(missing)} are not present in the line')
+
         ele_cut_ext = split_at.copy()
         if self.element_names[0] not in ele_cut_ext:
             ele_cut_ext.insert(0, self.element_names[0])
         if self.element_names[-1] not in ele_cut_ext:
             ele_cut_ext.append(self.element_names[-1])
 
+        ele_cut_set = set(ele_cut_ext)
         ele_cut_sorted = []
         for ee in self.element_names:
-            if ee in ele_cut_ext:
+            if ee in ele_cut_set:
                 ele_cut_sorted.append(ee)
+
+        ele_idx = {nn: ii for ii, nn in enumerate(self.element_names)}
 
         elements_map_line = []
         names_map_line = []
@@ -5402,8 +5414,16 @@ class Line:
             names_map_line.append(ele_cut_sorted[ii])
             elements_map_line.append(self.get(ele_cut_sorted[ii]))
 
+            # the split element is placed in the new line as it is, hence it
+            # is excluded from the map: the map starts at its exit, i.e. at
+            # the entrance of the following element (relevant for thick
+            # split elements)
+            map_start = self.element_names[ele_idx[ele_cut_sorted[ii]] + 1]
+            if map_start == ele_cut_sorted[ii+1]:
+                continue  # nothing between this element and the next cut
+
             smap = xt.SecondOrderTaylorMap.from_line(
-                                    self, start=ele_cut_sorted[ii],
+                                    self, start=map_start,
                                     end=ele_cut_sorted[ii+1],
                                     twiss_table=tw,
                                     _buffer=self._buffer)
