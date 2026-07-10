@@ -354,7 +354,7 @@ class LHCMultibunchBB:
 
     def update_opposing(self, bb_dict, mbtw_other, slots_other,
                          marker_names_other, sigmas_other=None,
-                         sigmas_own=None):
+                         sigmas_own=None, weights_other=None):
         """Write the opposing beam's per-bunch orbit + geometric survey
         separation into the beam-beam elements, in the frame of the line that
         holds them; optionally also update the sizes (dynamic beta):
@@ -363,7 +363,8 @@ class LHCMultibunchBB:
         (n_own, n_enc) -- the elements hold ONE own size per encounter, so
         the bunch AVERAGE is stored (the bunch-by-bunch resolution enters
         through the opposing beam's per-bunch sizes of the partner
-        elements).
+        elements). ``weights_other`` optionally gives the opposing bunches'
+        populations (default: the scenario's ``bunch_intensity`` for all).
 
         Between the two (opposite-parity) beam lines x flips and y does not.
         Matching TRAIN/pytrain (beam1 sees the opponent at co - sep, beam2 at
@@ -380,10 +381,12 @@ class LHCMultibunchBB:
         # `zeta_period` (set in install_bb), which makes the pairing periodic
         # in the bunch-label axis.
         # one reusable Particles object (same zeta/weight for all encounters)
+        if weights_other is None:
+            weights_other = self.bunch_intensity
         p = xt.Particles(p0c=self.p0c, mass0=xt.PROTON_MASS_EV, q0=1.0,
                          x=np.zeros(len(zeta_other)),
                          y=np.zeros(len(zeta_other)),
-                         zeta=zeta_other, weight=self.bunch_intensity)
+                         zeta=zeta_other, weight=weights_other)
         for j, name in enumerate(self.enc_names):
             p.x[:] = xs[:, j] - self.geom[name]['sep_x']
             p.y[:] = ys[:, j] - self.geom[name]['sep_y']
@@ -400,7 +403,8 @@ class LHCMultibunchBB:
     def solve_self_consistent(self, line_b1, line_b2, bb_b1, bb_b2,
                               slots_b1, slots_b2, n_iter=3, chrom=False,
                               twiss_mode='fast_orbit', show_progress=True,
-                              dynamic_beta=False):
+                              dynamic_beta=False,
+                              weights_b1=None, weights_b2=None):
         """Iterate twiss_multibunch on both beams, feeding each beam's
         per-bunch closed orbit into the other beam's elements. Returns
         (mbtw_b1, mbtw_b2).
@@ -437,10 +441,12 @@ class LHCMultibunchBB:
                                                self.marker_names_b2)
             self.update_opposing(bb_b1, mbtw_b2, slots_b2,
                                   self.marker_names_b2,
-                                  sigmas_other=sizes_b2, sigmas_own=sizes_b1)
+                                  sigmas_other=sizes_b2, sigmas_own=sizes_b1,
+                                  weights_other=weights_b2)
             self.update_opposing(bb_b2, mbtw_b1, slots_b1,
                                   self.marker_names_b1,
-                                  sigmas_other=sizes_b1, sigmas_own=sizes_b2)
+                                  sigmas_other=sizes_b1, sigmas_own=sizes_b2,
+                                  weights_other=weights_b1)
             if show_progress:
                 print(f'  iteration {it}: '
                       f'B1 qx spread {np.ptp(mbtw_b1.qx):.2e}, '
