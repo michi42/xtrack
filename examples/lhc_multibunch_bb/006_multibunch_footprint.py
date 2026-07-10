@@ -35,10 +35,22 @@ serial):
    knob (bound to the ``scale_strength`` of all lenses at installation, as
    in the xfields beam-beam config tools): computed at weak beam-beam and
    extrapolated linearly to full strength, which avoids resonance-distorted
-   footprints.
+   footprints. The footprints are computed on THREE variants of the machine
+   (same converged lenses) and plotted side by side with the execution
+   times compared:
+
+   - the full thick lattice;
+   - a second-order-map line that keeps the lattice octupoles (MO) as
+     exact thick elements between the maps, retaining most of the lattice
+     amplitude detuning (which is 3rd order, hence absent from the maps
+     themselves) at a fraction of the thick tracking cost;
+   - the plain second-order-map line, whose arcs carry NO amplitude
+     detuning -- its footprint isolates the beam-beam contribution and is
+     the cheapest to track.
 """
 
 import os
+import re
 import time
 import numpy as np
 import matplotlib.pyplot as plt
@@ -64,10 +76,19 @@ sim.install_markers(line_b1, mirror=False, b_h_dist=b_h_dist)
 sim.install_markers(line_b2, mirror=True, b_h_dist=b_h_dist)
 geom, meta = sim.compute_geometry(line_b1, line_b2, b_h_dist, slot_len)
 
+# lattice octupoles (MO), kept exact in the third footprint variant to
+# retain the lattice amplitude detuning (split elements are excluded from
+# the maps, so splitting at them preserves them exactly)
+mo_names = [nn for nn in line_b1.element_names if re.match(r'^mo\.', nn)]
+
 print('  building second-order maps between the beam-beam markers...')
 red_b1 = line_b1.get_line_with_second_order_maps(split_at=sim.marker_names_b1)
 red_b2 = line_b2.get_line_with_second_order_maps(split_at=sim.marker_names_b2)
-for rl in (red_b1, red_b2):
+print(f'  ... and a variant keeping the {len(mo_names)} lattice octupoles '
+      'of beam 1 exact...')
+red_mo_b1 = line_b1.get_line_with_second_order_maps(
+    split_at=sim.marker_names_b1 + mo_names)
+for rl in (red_b1, red_b2, red_mo_b1):
     rl.twiss_default['method'] = '4d'
     rl.build_tracker(_context=sim.context)
 
@@ -94,12 +115,15 @@ print(f'  total solve time: {time.time() - t0:.1f} s')
 # ----------------------------------------------------------------------------
 # 2) Transfer the converged solution to the full thick lattice of beam 1
 # ----------------------------------------------------------------------------
-print('Installing the converged lenses on the full thick lattice (B1)...')
+print('Installing the converged lenses on the full thick lattice (B1) and '
+      'on the maps+MO line...')
 bb_thick_b1 = sim.install_bb(line_b1, False, len(slots_b2))
+bb_mo_b1 = sim.install_bb(red_mo_b1, False, len(slots_b2))
 sizes_b2 = sim.compute_sigmas(mbtw_b2, sim.marker_names_b2)
 sizes_b1 = sim.compute_sigmas(mbtw_b1, sim.marker_names_b1)
-sim.update_opposing(bb_thick_b1, mbtw_b2, slots_b2, sim.marker_names_b2,
-                    sigmas_other=sizes_b2, sigmas_own=sizes_b1)
+for bb_dict in (bb_thick_b1, bb_mo_b1):
+    sim.update_opposing(bb_dict, mbtw_b2, slots_b2, sim.marker_names_b2,
+                        sigmas_other=sizes_b2, sigmas_own=sizes_b1)
 
 zeta_b1 = np.array(slots_b1) * sim.ZETA_PER_SLOT
 
@@ -124,39 +148,64 @@ print(f'  longest train: {best_len} bunches starting at slot {best_start}')
 pos_in_train = np.round(np.linspace(0, len(train) - 1, 12)).astype(int)
 family = [(train[k], f'train bunch {k + 1}') for k in pos_in_train]
 
-# cross-check the transferred lattice on the family bunches
+# cross-check the transferred lattices on the family bunches
 zeta_fam = np.array([sl for sl, _ in family]) * sim.ZETA_PER_SLOT
-mb_thick = line_b1.twiss_multibunch(zeta_bunches=zeta_fam,
-                                    mode='fast_orbit', show_progress=False)
 idx_fam = np.searchsorted(slots_b1, [sl for sl, _ in family])
-dq_check = mb.wrap_frac_tune(mb_thick.qx - np.asarray(mbtw_b1.qx)[idx_fam])
-print(f'  transfer check (thick vs sector maps, family bunches): '
-      f'max |dqx| = {np.max(np.abs(dq_check)):.2e}')
+for label, transferred in (('thick', line_b1), ('maps+MO', red_mo_b1)):
+    mb_check = transferred.twiss_multibunch(
+        zeta_bunches=zeta_fam, mode='fast_orbit', show_progress=False)
+    dq_check = mb.wrap_frac_tune(
+        mb_check.qx - np.asarray(mbtw_b1.qx)[idx_fam])
+    print(f'  transfer check ({label} vs sector maps, family bunches): '
+          f'max |dqx| = {np.max(np.abs(dq_check)):.2e}')
 
 # incoherent footprints: individual particles see the field of the opposing
 # bunches with their OWN sizes (weak-strong), not the convolved coherent
 # kick used for the rigid-bunch closed solution. NOTE: switched only AFTER
 # the transfer check above, which must reproduce the (coherent) sector-map
 # solution.
-for bb in bb_thick_b1.values():
+for bb in (list(bb_thick_b1.values()) + list(bb_mo_b1.values())
+           + list(bb_b1.values())):
     bb.coherent = False
 
-print('Footprints on the thick lattice:')
+# Footprints on the full thick lattice, on the maps+MO line (exact
+# octupoles between the maps -> keeps most of the lattice amplitude
+# detuning) and on the plain second-order-map line (2nd-order Taylor arcs
+# carry NO amplitude detuning -- its footprint contains only the (exact)
+# beam-beam nonlinearity), all with the converged incoherent lenses.
+LINES = (('thick', line_b1), ('maps+MO', red_mo_b1), ('maps', red_b1))
+SUFFIX = {'thick': '', 'maps+MO': '_mapmo', 'maps': '_map'}
+print('Footprints (thick lattice vs maps + exact MO vs plain maps):')
 footprints = {}
+timing = {tag: 0.0 for tag, _ in LINES}
 for sl, label in family:
-    t0 = time.time()
-    # linear rescale on the beam-beam strength (as in the xmask footprint
-    # example): the footprint is computed at weak beam-beam
-    # (beambeam_scale = v0 and v0 + dv) and extrapolated linearly to the
-    # actual strength, avoiding resonance-distorted footprints.
-    fp = line_b1.get_footprint(
-        nemitt_x=sim.nemitt, nemitt_y=sim.nemitt,
-        r_range=(0.3, 6), theta_range=(0.15, np.pi / 2 - 0.15),
-        freeze_longitudinal=True, zeta0=sl * sim.ZETA_PER_SLOT,
-        linear_rescale_on_knobs=[xt.LinearRescale(knob_name='beambeam_scale', v0=0.0, dv=0.1)])
-    footprints[sl] = dict(label=label, qx=fp.qx, qy=fp.qy)
-    print(f'  slot {sl:4d} ({label:14s}): {time.time() - t0:.1f} s  '
-          f'qx [{fp.qx.min():.4f}, {fp.qx.max():.4f}]')
+    fp = {}
+    for tag, line in LINES:
+        t0 = time.time()
+        # linear rescale on the beam-beam strength (as in the xmask
+        # footprint example): the footprint is computed at weak beam-beam
+        # (beambeam_scale = v0 and v0 + dv) and extrapolated linearly to
+        # the actual strength, avoiding resonance-distorted footprints.
+        fp[tag] = line.get_footprint(
+            nemitt_x=sim.nemitt, nemitt_y=sim.nemitt,
+            r_range=(0.3, 6), theta_range=(0.15, np.pi / 2 - 0.15),
+            freeze_longitudinal=True, zeta0=sl * sim.ZETA_PER_SLOT,
+            linear_rescale_on_knobs=[xt.LinearRescale(
+                knob_name='beambeam_scale', v0=0.0, dv=0.1)])
+        fp[tag + '_t'] = time.time() - t0
+        timing[tag] += fp[tag + '_t']
+    footprints[sl] = dict(label=label)
+    for tag, _ in LINES:
+        footprints[sl]['qx' + SUFFIX[tag]] = fp[tag].qx
+        footprints[sl]['qy' + SUFFIX[tag]] = fp[tag].qy
+    print(f'  slot {sl:4d} ({label:14s}): '
+          + ' / '.join(f'{tag} {fp[tag + "_t"]:5.1f} s' for tag, _ in LINES)
+          + f'   qx [{fp["thick"].qx.min():.4f}, {fp["thick"].qx.max():.4f}]')
+print('footprint time: '
+      + ', '.join(f'{tag} {timing[tag]:.0f} s' for tag, _ in LINES)
+      + '  -> speed-up vs thick: '
+      + ', '.join(f'{tag} x{timing["thick"] / timing[tag]:.1f}'
+                  for tag, _ in LINES[1:]))
 
 import pandas as pd
 pd.to_pickle(footprints, os.path.join(mb.HERE, 'footprints_coll.pkl'))
@@ -168,18 +217,25 @@ print('saved footprints_coll.pkl')
 from matplotlib.cm import ScalarMappable
 from matplotlib.colors import Normalize
 
-fig, ax = plt.subplots(figsize=(9, 8))
+fig, axes = plt.subplots(
+    1, 3, figsize=(18, 6.5), sharex=True, sharey=True)
 cmap = plt.get_cmap('viridis')
 norm = Normalize(vmin=1, vmax=len(train))
-for k, (sl, _) in zip(pos_in_train, family):
-    fp = footprints[sl]
-    color = cmap(norm(k + 1))
-    ax.plot(fp['qx'], fp['qy'], color=color, lw=1)
-    ax.plot(fp['qx'].T, fp['qy'].T, color=color, lw=1)
-ax.set_xlabel(r'$q_x$')
-ax.set_ylabel(r'$q_y$')
-ax.set_title('Per-bunch tune footprints, LHC collision (head-on + BBLR)')
-fig.colorbar(ScalarMappable(norm=norm, cmap=cmap), ax=ax,
+for ax, suffix, title in ((axes[0], '', 'full thick lattice'),
+                          (axes[1], '_mapmo', 'second-order maps\n'
+                           '+ exact MO octupoles'),
+                          (axes[2], '_map', 'second-order maps\n'
+                           '(no lattice/octupole detuning)')):
+    for k, (sl, _) in zip(pos_in_train, family):
+        fp = footprints[sl]
+        color = cmap(norm(k + 1))
+        ax.plot(fp['qx' + suffix], fp['qy' + suffix], color=color, lw=1)
+        ax.plot(fp['qx' + suffix].T, fp['qy' + suffix].T, color=color, lw=1)
+    ax.set_xlabel(r'$q_x$')
+    ax.set_title(title)
+axes[0].set_ylabel(r'$q_y$')
+fig.suptitle('Per-bunch tune footprints, LHC collision (head-on + BBLR)')
+fig.colorbar(ScalarMappable(norm=norm, cmap=cmap), ax=list(axes),
              label='bunch position in train')
 plt.tight_layout()
 plt.show()
