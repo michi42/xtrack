@@ -235,9 +235,9 @@ for ax, suffix, title in ((axes[0], '', 'full thick lattice'),
     ax.set_title(title)
 axes[0].set_ylabel(r'$q_y$')
 fig.suptitle('Per-bunch tune footprints, LHC collision (head-on + BBLR)')
+fig.tight_layout()
 fig.colorbar(ScalarMappable(norm=norm, cmap=cmap), ax=list(axes),
              label='bunch position in train')
-plt.tight_layout()
 plt.show()
 
 
