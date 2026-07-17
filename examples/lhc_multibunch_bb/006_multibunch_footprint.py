@@ -93,15 +93,15 @@ slots_b1, slots_b2 = setup_red.bunches_cw, setup_red.bunches_acw
 print(f'  populated bunches: B1 = {len(slots_b1)}, B2 = {len(slots_b2)}')
 
 # ----------------------------------------------------------------------------
-# 1) Self-consistent solve on the fast sector-map model: 2 iterations
-#    orbit-only, 2 with dynamic beta
+# 1) Self-consistent solve on the fast sector-map model: 4 iterations
+#    orbit-only, 4 with dynamic beta
 # ----------------------------------------------------------------------------
-print('Self-consistent solve (3 iterations fast_orbit):')
+print('Self-consistent solve (4 iterations fast_orbit):')
 t0 = time.time()
-setup_red.solve(max_iterations=2, max_error=0.0)
-print('Self-consistent solve (3 more iterations with dynamic beta):')
+setup_red.solve(max_iterations=4)
+print('Self-consistent solve (4 more iterations with dynamic beta):')
 mbtw_b1, mbtw_b2 = setup_red.solve(
-    max_iterations=2, max_error=0.0, dynamic_beta=True)
+    max_iterations=4, dynamic_beta=True)
 print(f'  total solve time: {time.time() - t0:.1f} s')
 
 # ----------------------------------------------------------------------------
