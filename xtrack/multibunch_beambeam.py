@@ -83,6 +83,16 @@ def _beta0(line):
     return float(line.particle_ref.beta0[0])
 
 
+def _bind_beambeam_scale(line, bb_names):
+    """Create a per-line ``beambeam_scale`` knob and bind the ``scale_strength``
+    of all the beam-beam elements to it (as in the xfields beam-beam config
+    tools), e.g. for footprints with a linear rescale of the beam-beam strength.
+    """
+    line.vars['beambeam_scale'] = 1.0
+    for name in bb_names:
+        line.element_refs[name].scale_strength = line.vars['beambeam_scale']
+
+
 class MultibunchBBSetup:
     """State and operations of one multi-bunch beam-beam problem.
 
@@ -210,11 +220,7 @@ class MultibunchBBSetup:
             places.append(env.place(elname, bb, at=at, from_=ip))
             names.append((base, elname))
         line.insert(places)
-        # A per-line 'beambeam_scale' knob scaling the strength of all lenses of
-        # this line (as in the xfields beam-beam config tools).
-        line.vars['beambeam_scale'] = 1.0
-        for base, elname in names:
-            line.element_refs[elname].scale_strength = line.vars['beambeam_scale']
+        _bind_beambeam_scale(line, [elname for _, elname in names])
         return {base: line[elname] for base, elname in names}
 
     def _resolve_ip_offsets(self, tw_cw):
@@ -355,6 +361,9 @@ class MultibunchBBSetup:
         new.num_particles_acw = self.num_particles_acw
         new.bb_cw = {b: red_cw[new.bb_name(b, False)] for b in new.enc_names}
         new.bb_acw = {b: red_acw[new.bb_name(b, True)] for b in new.enc_names}
+        # the reduced lines have their own env: re-create the beambeam_scale knob
+        _bind_beambeam_scale(red_cw, new.bb_names_cw)
+        _bind_beambeam_scale(red_acw, new.bb_names_acw)
         return new
 
     # ------------------------------------------------------------------
