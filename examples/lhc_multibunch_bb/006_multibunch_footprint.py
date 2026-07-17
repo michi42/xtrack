@@ -55,77 +55,64 @@ import time
 import numpy as np
 import matplotlib.pyplot as plt
 
-import xobjects as xo
 import xtrack as xt
 import lhc_mb_common as mb
 
 # multi-threaded CPU kernels by default in this demo
-omp = os.environ.get('LHC_OMP', 'auto')
-sim = mb.LHCMultibunchBB.collision(context=(
-    xo.ContextCpu() if omp in ('0', '', 'serial')
-    else xo.ContextCpu(omp_num_threads='auto' if omp == 'auto' else int(omp))))
+os.environ.setdefault('LHC_OMP', 'auto')
+env, line_b1, line_b2, par = mb.load_lhc('collision')
 
 # ----------------------------------------------------------------------------
-# Build the machine (as in 002/004)
+# Build the machine (as in 002/004): install + geometry on the full lattice
 # ----------------------------------------------------------------------------
-env, line_b1, line_b2 = sim.load()
-slot_len = line_b1.get_length() / sim.N_SLOTS
-b_h_dist = slot_len / 2.0
-
-sim.install_markers(line_b1, mirror=False, b_h_dist=b_h_dist)
-sim.install_markers(line_b2, mirror=True, b_h_dist=b_h_dist)
-geom, meta = sim.compute_geometry(line_b1, line_b2, b_h_dist, slot_len)
+scheme_b1, scheme_b2 = mb.load_scheme()
+setup = env.xfields.install_multibunch_beambeam(
+    clockwise_line='lhcb1', anticlockwise_line='lhcb2', ips=par['ips'],
+    num_long_range_encounters_per_side=par['nparasitic'],
+    harmonic_number=mb.HARMONIC_NUMBER,
+    bunch_spacing_buckets=mb.BUNCH_SPACING_BUCKETS,
+    nemitt_x=par['nemitt'], nemitt_y=par['nemitt'],
+    filling_clockwise=mb.filling_from_scheme(scheme_b1, par['bunch_intensity']),
+    filling_anticlockwise=mb.filling_from_scheme(scheme_b2, par['bunch_intensity']))
 
 # lattice octupoles (MO), kept exact in the third footprint variant to
 # retain the lattice amplitude detuning (split elements are excluded from
 # the maps, so splitting at them preserves them exactly)
 mo_names = [nn for nn in line_b1.element_names if re.match(r'^mo\.', nn)]
 
-print('  building second-order maps between the beam-beam markers...')
-red_b1 = line_b1.get_line_with_second_order_maps(split_at=sim.marker_names_b1)
-red_b2 = line_b2.get_line_with_second_order_maps(split_at=sim.marker_names_b2)
+print('  building second-order maps between the beam-beam elements...')
+setup_red = setup.second_order_maps(context=par['context'])
 print(f'  ... and a variant keeping the {len(mo_names)} lattice octupoles '
       'of beam 1 exact...')
-red_mo_b1 = line_b1.get_line_with_second_order_maps(
-    split_at=sim.marker_names_b1 + mo_names)
-for rl in (red_b1, red_b2, red_mo_b1):
-    rl.twiss_default['method'] = '4d'
-    rl.build_tracker(_context=sim.context)
-
-scheme_b1, scheme_b2 = mb.load_scheme()
-slots_b1, slots_b2 = mb.all_filled_slots(scheme_b1, scheme_b2)
+setup_mo = setup.second_order_maps(keep_extra_cw=mo_names,
+                                   context=par['context'])
+# beam-1 lines and lens handles used for the footprints below
+red_b1, red_mo_b1 = setup_red.cw_line, setup_mo.cw_line
+bb_b1, bb_thick_b1, bb_mo_b1 = setup_red.bb_cw, setup.bb_cw, setup_mo.bb_cw
+slots_b1, slots_b2 = setup_red.bunches_cw, setup_red.bunches_acw
 print(f'  populated bunches: B1 = {len(slots_b1)}, B2 = {len(slots_b2)}')
 
-bb_b1 = sim.install_bb(red_b1, False, len(slots_b2))
-bb_b2 = sim.install_bb(red_b2, True, len(slots_b1))
-
 # ----------------------------------------------------------------------------
-# 1) Self-consistent solve: 2 iterations orbit-only, 2 with dynamic beta
+# 1) Self-consistent solve on the fast sector-map model: 2 iterations
+#    orbit-only, 2 with dynamic beta
 # ----------------------------------------------------------------------------
-print('Self-consistent solve (2 iterations fast_orbit):')
+print('Self-consistent solve (3 iterations fast_orbit):')
 t0 = time.time()
-sim.solve_self_consistent(red_b1, red_b2, bb_b1, bb_b2,
-                          slots_b1, slots_b2, n_iter=2)
-print('Self-consistent solve (2 more iterations with dynamic beta):')
-mbtw_b1, mbtw_b2 = sim.solve_self_consistent(
-    red_b1, red_b2, bb_b1, bb_b2, slots_b1, slots_b2, n_iter=2,
-    dynamic_beta=True)
+setup_red.solve(max_iterations=2, max_error=0.0)
+print('Self-consistent solve (3 more iterations with dynamic beta):')
+mbtw_b1, mbtw_b2 = setup_red.solve(
+    max_iterations=2, max_error=0.0, dynamic_beta=True)
 print(f'  total solve time: {time.time() - t0:.1f} s')
 
 # ----------------------------------------------------------------------------
-# 2) Transfer the converged solution to the full thick lattice of beam 1
+# 2) Transfer the converged solution to the full thick lattice of beam 1 and to
+#    the maps+MO line (their beam-beam lenses are loaded with the converged
+#    per-bunch orbits and dynamic sizes)
 # ----------------------------------------------------------------------------
-print('Installing the converged lenses on the full thick lattice (B1) and '
+print('Loading the converged solution on the full thick lattice (B1) and '
       'on the maps+MO line...')
-bb_thick_b1 = sim.install_bb(line_b1, False, len(slots_b2))
-bb_mo_b1 = sim.install_bb(red_mo_b1, False, len(slots_b2))
-sizes_b2 = sim.compute_sigmas(mbtw_b2, sim.marker_names_b2)
-sizes_b1 = sim.compute_sigmas(mbtw_b1, sim.marker_names_b1)
-for bb_dict in (bb_thick_b1, bb_mo_b1):
-    sim.update_opposing(bb_dict, mbtw_b2, slots_b2, sim.marker_names_b2,
-                        sigmas_other=sizes_b2, sigmas_own=sizes_b1)
-
-zeta_b1 = np.array(slots_b1) * sim.ZETA_PER_SLOT
+setup.load_solution(mbtw_b1, mbtw_b2, dynamic_beta=True)
+setup_mo.load_solution(mbtw_b1, mbtw_b2, dynamic_beta=True)
 
 # ----------------------------------------------------------------------------
 # 3) Footprints for the bunch families of the longest train
@@ -133,7 +120,7 @@ zeta_b1 = np.array(slots_b1) * sim.ZETA_PER_SLOT
 # longest contiguous filled run of beam 1
 filled = np.asarray(scheme_b1) > 0
 best_len = best_start = cur_len = cur_start = 0
-for s in range(sim.N_SLOTS):
+for s in range(mb.N_SLOTS):
     if filled[s]:
         cur_start = s if cur_len == 0 else cur_start
         cur_len += 1
@@ -149,7 +136,7 @@ pos_in_train = np.round(np.linspace(0, len(train) - 1, 12)).astype(int)
 family = [(train[k], f'train bunch {k + 1}') for k in pos_in_train]
 
 # cross-check the transferred lattices on the family bunches
-zeta_fam = np.array([sl for sl, _ in family]) * sim.ZETA_PER_SLOT
+zeta_fam = np.array([sl for sl, _ in family]) * setup.slot_len
 idx_fam = np.searchsorted(slots_b1, [sl for sl, _ in family])
 for label, transferred in (('thick', line_b1), ('maps+MO', red_mo_b1)):
     mb_check = transferred.twiss_multibunch(
@@ -187,9 +174,9 @@ for sl, label in family:
         # (beambeam_scale = v0 and v0 + dv) and extrapolated linearly to
         # the actual strength, avoiding resonance-distorted footprints.
         fp[tag] = line.get_footprint(
-            nemitt_x=sim.nemitt, nemitt_y=sim.nemitt,
+            nemitt_x=par['nemitt'], nemitt_y=par['nemitt'],
             r_range=(0.3, 6), theta_range=(0.15, np.pi / 2 - 0.15),
-            freeze_longitudinal=True, zeta0=sl * sim.ZETA_PER_SLOT,
+            freeze_longitudinal=True, zeta0=sl * setup.slot_len,
             linear_rescale_on_knobs=[xt.LinearRescale(
                 knob_name='beambeam_scale', v0=0.0, dv=0.1)])
         fp[tag + '_t'] = time.time() - t0
@@ -239,5 +226,3 @@ fig.tight_layout()
 fig.colorbar(ScalarMappable(norm=norm, cmap=cmap), ax=list(axes),
              label='bunch position in train')
 plt.show()
-
-

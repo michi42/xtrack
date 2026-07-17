@@ -26,9 +26,9 @@ import numpy as np
 import xobjects as xo
 import lhc_mb_common as mb
 
-omp = os.environ.get('LHC_OMP', 'auto')
-ctx_mt = xo.ContextCpu(omp_num_threads='auto' if omp == 'auto' else int(omp))
-sim = mb.LHCMultibunchBB.collision(context=ctx_mt)
+os.environ.setdefault('LHC_OMP', 'auto')
+env, line_b1, line_b2, par = mb.load_lhc('collision')
+ctx_mt = par['context']
 n_threads = os.cpu_count() if ctx_mt.omp_num_threads == 'auto' \
     else ctx_mt.omp_num_threads
 print(f'multi-threaded context: {ctx_mt.omp_num_threads} '
@@ -37,36 +37,28 @@ print(f'multi-threaded context: {ctx_mt.omp_num_threads} '
 # ----------------------------------------------------------------------------
 # Build the machine (as in 002) and populate the beam-beam elements
 # ----------------------------------------------------------------------------
-env, line_b1, line_b2 = sim.load()
-slot_len = line_b1.get_length() / sim.N_SLOTS
-b_h_dist = slot_len / 2.0
-
-sim.install_markers(line_b1, mirror=False, b_h_dist=b_h_dist)
-sim.install_markers(line_b2, mirror=True, b_h_dist=b_h_dist)
-geom, meta = sim.compute_geometry(line_b1, line_b2, b_h_dist, slot_len)
-
-print('  building second-order maps between the beam-beam markers...')
-red_b1 = line_b1.get_line_with_second_order_maps(split_at=sim.marker_names_b1)
-red_b2 = line_b2.get_line_with_second_order_maps(split_at=sim.marker_names_b2)
-for rl in (red_b1, red_b2):
-    rl.twiss_default['method'] = '4d'
-    rl.build_tracker(_context=sim.context)
-
 scheme_b1, scheme_b2 = mb.load_scheme()
-slots_b1, slots_b2 = mb.all_filled_slots(scheme_b1, scheme_b2)
+setup = env.xfields.install_multibunch_beambeam(
+    clockwise_line='lhcb1', anticlockwise_line='lhcb2', ips=par['ips'],
+    num_long_range_encounters_per_side=par['nparasitic'],
+    harmonic_number=mb.HARMONIC_NUMBER,
+    bunch_spacing_buckets=mb.BUNCH_SPACING_BUCKETS,
+    nemitt_x=par['nemitt'], nemitt_y=par['nemitt'],
+    filling_clockwise=mb.filling_from_scheme(scheme_b1, par['bunch_intensity']),
+    filling_anticlockwise=mb.filling_from_scheme(scheme_b2, par['bunch_intensity']))
+print('  building second-order maps between the beam-beam elements...')
+setup_red = setup.second_order_maps(context=ctx_mt)
+red_b1 = setup_red.cw_line
+slots_b1, slots_b2 = setup_red.bunches_cw, setup_red.bunches_acw
 print(f'  populated bunches: B1 = {len(slots_b1)}, B2 = {len(slots_b2)}')
 
-bb_b1 = sim.install_bb(red_b1, False, len(slots_b2))
-bb_b2 = sim.install_bb(red_b2, True, len(slots_b1))
-
 print('Populating the beam-beam elements (one solve iteration):')
-sim.solve_self_consistent(red_b1, red_b2, bb_b1, bb_b2,
-                          slots_b1, slots_b2, n_iter=1)
+setup_red.solve(max_iterations=1, max_error=0.0)
 
 # ----------------------------------------------------------------------------
 # Timing: batched multibunch twiss of B1, serial vs multi-threaded kernels
 # ----------------------------------------------------------------------------
-zeta_b1 = np.array(slots_b1) * sim.ZETA_PER_SLOT
+zeta_b1 = slots_b1 * setup_red.slot_len
 contexts = (('serial', xo.ContextCpu()),
             (f'openmp ({n_threads} threads)', ctx_mt))
 

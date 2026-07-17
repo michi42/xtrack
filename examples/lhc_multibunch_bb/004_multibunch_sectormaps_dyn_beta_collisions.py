@@ -33,43 +33,31 @@ import time
 import numpy as np
 import matplotlib.pyplot as plt
 
-import xobjects as xo
 import lhc_mb_common as mb
 
+N_ITER = int(os.environ.get('LHC_NITER', '6'))
+
 # multi-threaded CPU kernels by default in this demo
-omp = os.environ.get('LHC_OMP', 'auto')
-sim = mb.LHCMultibunchBB.collision(context=(
-    xo.ContextCpu() if omp == 'serial'
-    else xo.ContextCpu(omp_num_threads='auto' if omp == 'auto' else int(omp))))
-
-N_ITER = int(os.environ.get('LHC_NITER', '3'))
+os.environ.setdefault('LHC_OMP', 'auto')
+env, line_b1, line_b2, par = mb.load_lhc('collision')
 
 # ----------------------------------------------------------------------------
-# Build the machine (as in 002)
+# Build the machine (as in 002): install + geometry on the full lattice, then
+# a fast second-order-map copy
 # ----------------------------------------------------------------------------
-env, line_b1, line_b2 = sim.load()
-slot_len = line_b1.get_length() / sim.N_SLOTS
-b_h_dist = slot_len / 2.0
-
-sim.install_markers(line_b1, mirror=False, b_h_dist=b_h_dist)
-sim.install_markers(line_b2, mirror=True, b_h_dist=b_h_dist)
-geom, meta = sim.compute_geometry(line_b1, line_b2, b_h_dist, slot_len)
-
-print('  building second-order maps between the beam-beam markers...')
-red_b1 = line_b1.get_line_with_second_order_maps(split_at=sim.marker_names_b1)
-red_b2 = line_b2.get_line_with_second_order_maps(split_at=sim.marker_names_b2)
-for rl in (red_b1, red_b2):
-    rl.twiss_default['method'] = '4d'
-    rl.build_tracker(_context=sim.context)
-tw_red = red_b1.twiss()
-tw_red2 = red_b2.twiss()
-
 scheme_b1, scheme_b2 = mb.load_scheme()
-slots_b1, slots_b2 = mb.all_filled_slots(scheme_b1, scheme_b2)
+setup = env.xfields.install_multibunch_beambeam(
+    clockwise_line='lhcb1', anticlockwise_line='lhcb2', ips=par['ips'],
+    num_long_range_encounters_per_side=par['nparasitic'],
+    harmonic_number=mb.HARMONIC_NUMBER,
+    bunch_spacing_buckets=mb.BUNCH_SPACING_BUCKETS,
+    nemitt_x=par['nemitt'], nemitt_y=par['nemitt'],
+    filling_clockwise=mb.filling_from_scheme(scheme_b1, par['bunch_intensity']),
+    filling_anticlockwise=mb.filling_from_scheme(scheme_b2, par['bunch_intensity']))
+print('  building second-order maps between the beam-beam elements...')
+setup_red = setup.second_order_maps(context=par['context'])
+slots_b1, slots_b2 = setup_red.bunches_cw, setup_red.bunches_acw
 print(f'  populated bunches: B1 = {len(slots_b1)}, B2 = {len(slots_b2)}')
-
-bb_b1 = sim.install_bb(red_b1, False, len(slots_b2))
-bb_b2 = sim.install_bb(red_b2, True, len(slots_b1))
 
 # ----------------------------------------------------------------------------
 # Solve with static sizes, then with dynamic beta
@@ -78,18 +66,16 @@ results = {}
 for label, dynamic_beta in (('static', False), ('dynamic beta', True)):
     print(f'Self-consistent solve ({label}):')
     t0 = time.time()
-    # twiss_mode='fast' in both runs (dynamic_beta forces it anyway) so the
-    # returned tables carry the per-bunch optics and the cost is comparable
-    mbtw_b1, mbtw_b2 = sim.solve_self_consistent(
-        red_b1, red_b2, bb_b1, bb_b2, slots_b1, slots_b2,
-        n_iter=N_ITER, twiss_mode='fast', dynamic_beta=dynamic_beta)
+    mbtw_b1, mbtw_b2 = setup_red.solve(
+        max_iterations=N_ITER, max_error=0.0,
+        dynamic_beta=dynamic_beta)
     print(f'  solve time ({N_ITER} iters): {time.time() - t0:.1f} s')
     results[label] = (mbtw_b1, mbtw_b2)
 
 # ----------------------------------------------------------------------------
 # Compare per-bunch tunes, orbit and beta* at IP1 (B1)
 # ----------------------------------------------------------------------------
-mk_b1 = mb.marker_name('bb_ip1_ho', False)
+mk_b1 = setup_red.bb_name('bb_ip1_ho', False)
 
 
 def extract(mbtw):
@@ -104,10 +90,12 @@ def extract(mbtw):
 stat = extract(results['static'][0])
 dyn = extract(results['dynamic beta'][0])
 
-df_b1 = mb.results_dataframe(results['dynamic beta'][0], slots_b1,
-                             tw_red.qx, tw_red.qy, ip='ip1', reverse=False)
-df_b2 = mb.results_dataframe(results['dynamic beta'][1], slots_b2,
-                             tw_red2.qx, tw_red2.qy, ip='ip1', reverse=True)
+df_b1 = mb.results_dataframe(setup_red, results['dynamic beta'][0], slots_b1,
+                             setup.meta['qx_cw'], setup.meta['qy_cw'],
+                             mirror=False)
+df_b2 = mb.results_dataframe(setup_red, results['dynamic beta'][1], slots_b2,
+                             setup.meta['qx_acw'], setup.meta['qy_acw'],
+                             mirror=True)
 df_b1.to_pickle(os.path.join(mb.HERE, 'results_b1_coll_dynbeta.pkl'))
 df_b2.to_pickle(os.path.join(mb.HERE, 'results_b2_coll_dynbeta.pkl'))
 print('saved results_b1_coll_dynbeta.pkl / results_b2_coll_dynbeta.pkl')
