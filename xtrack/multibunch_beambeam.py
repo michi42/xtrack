@@ -54,6 +54,8 @@ beams, mirrored on the reversed line.
 
 import numpy as np
 
+from .general import _print
+
 
 def _resolve_line(env, line):
     """Accept a Line or a line name and return the Line."""
@@ -197,18 +199,26 @@ class MultibunchBBSetup:
         """Place one (still un-sized) beam-beam element per encounter DIRECTLY
         at the encounter positions of ``line`` (no separate markers). The
         element is named ``bb_name(base, mirror)`` and is the observation point
-        for the geometry. Sizes/offsets are set later by ``_configure_bb``."""
+        for the geometry. Sizes/offsets are set later by ``_configure_bb``.
+
+        The own-beam bunch zeta grid (this line's bunches) is registered on each
+        element so the kernel can match every tracked particle to its own bunch
+        for the coherent convolution; the own per-bunch sizes are indexed by it.
+        """
         import xfields as xf
         env = line.env
         beta0_other = _beta0(self.acw_line if not mirror else self.cw_line)
         q0_other = float((self.acw_line if not mirror
                           else self.cw_line).particle_ref.q0)
+        own_slots = self.bunches_acw if mirror else self.bunches_cw
+        own_zeta = np.asarray(own_slots) * self.slot_len
         places, names = [], []
         for base, ip, sn in self.enc_specs:
             at = (-sn if mirror else sn) * self.b_h_dist + 1e-6
             elname = self.bb_name(base, mirror)
             bb = xf.BeamBeamBiGaussianMultibunch2D(
                 num_bunches=max(n_other, 1),
+                own_beam_zeta=own_zeta,             # this beam's bunch grid
                 zeta_offset=0.0,
                 zeta_match_tol=0.1 * self.slot_len,
                 zeta_period=self.n_slots * self.slot_len,
@@ -296,24 +306,33 @@ class MultibunchBBSetup:
 
     def _configure_bb(self):
         """Set the (static) transverse sizes and the pairing ``zeta_offset`` on
-        the placed beam-beam elements from the computed geometry."""
+        the placed beam-beam elements from the computed geometry. With the design
+        (static) optics the beta functions are the same for all bunches, so the
+        own (``sigma_x``/``sigma_y``, indexed by THIS beam) and opposing
+        (``other_beam_sigma_x``/``other_beam_sigma_y``, indexed by the OTHER
+        beam) per-bunch sizes are each filled with a single value broadcast over
+        their own set of bunches."""
         ex, ey = self.nemitt_x, self.nemitt_y
         for mirror, bb_dict in ((False, self.bb_cw), (True, self.bb_acw)):
             own, oth = ('acw', 'cw') if mirror else ('cw', 'acw')
-            n_cap = (len(self.bunches_acw) if not mirror
+            n_own = (len(self.bunches_acw) if mirror
                      else len(self.bunches_cw))
+            n_oth = (len(self.bunches_cw) if mirror
+                     else len(self.bunches_acw))
             gamma0 = _gamma0(self.cw_line if not mirror else self.acw_line)
             for base in self.enc_names:
                 e = self.geom[base]
                 bb = bb_dict[base]
                 bb.zeta_offset = (-e['offset'] if mirror else e['offset']) \
                     * self.slot_len
-                bb.sigma_x = float(np.sqrt(e[f'betx_{own}'] * ex / gamma0))
-                bb.sigma_y = float(np.sqrt(e[f'bety_{own}'] * ey / gamma0))
+                bb.sigma_x = np.full(
+                    max(n_own, 1), np.sqrt(e[f'betx_{own}'] * ex / gamma0))
+                bb.sigma_y = np.full(
+                    max(n_own, 1), np.sqrt(e[f'bety_{own}'] * ey / gamma0))
                 bb.other_beam_sigma_x = np.full(
-                    max(n_cap, 1), np.sqrt(e[f'betx_{oth}'] * ex / gamma0))
+                    max(n_oth, 1), np.sqrt(e[f'betx_{oth}'] * ex / gamma0))
                 bb.other_beam_sigma_y = np.full(
-                    max(n_cap, 1), np.sqrt(e[f'bety_{oth}'] * ey / gamma0))
+                    max(n_oth, 1), np.sqrt(e[f'bety_{oth}'] * ey / gamma0))
 
     # ------------------------------------------------------------------
     # Sector-map reduction
@@ -376,6 +395,11 @@ class MultibunchBBSetup:
         sigma_y = np.sqrt(mbtw['bety', bb_names] * self.nemitt_y / gamma0)
         return sigma_x, sigma_y
 
+    def _sigma_vector(self, bb_dict):
+        sx = np.stack([np.asarray(bb_dict[b].sigma_x) for b in self.enc_names], axis=1)
+        sy = np.stack([np.asarray(bb_dict[b].sigma_y) for b in self.enc_names], axis=1)
+        return np.concatenate([sx.ravel(), sy.ravel()])
+
     def _update_opposing(self, bb_dict, mbtw_other, slots_other, bb_names_other,
                          num_particles_other, sigmas_other=None,
                          sigmas_own=None):
@@ -383,7 +407,10 @@ class MultibunchBBSetup:
         the beam-beam elements ``bb_dict`` (optionally also the dynamic-beta
         sizes). Between the two (opposite-parity) beam lines x flips and y does
         not; matching TRAIN/pytrain and the reversed-line x-flip, the survey
-        separation enters as ``-sep_x`` in x for BOTH beams."""
+        separation enters as ``-sep_x`` in x for BOTH beams.
+
+        The opposing sizes (``sigmas_other``) are indexed by the OTHER beam; the
+        own sizes (``sigmas_own``) are indexed by THIS beam."""
         import xtrack as xt
         xs = -mbtw_other['x', bb_names_other]
         ys = mbtw_other['y', bb_names_other]
@@ -402,8 +429,8 @@ class MultibunchBBSetup:
                           other_beam_sigma_y=sigmas_other[1][:, j])
             bb = bb_dict[base]
             if sigmas_own is not None:
-                bb.sigma_x = sigmas_own[0][:, j].mean()
-                bb.sigma_y = sigmas_own[1][:, j].mean()
+                bb.sigma_x = sigmas_own[0][:, j]
+                bb.sigma_y = sigmas_own[1][:, j]
             bb.update_from_other_beam(p, **kw)
 
     def load_solution(self, mbtw_clockwise, mbtw_anticlockwise,
@@ -429,7 +456,7 @@ class MultibunchBBSetup:
                               self.bb_names_cw, self.num_particles_cw,
                               sigmas_other=sizes_cw, sigmas_own=sizes_acw)
 
-    def solve(self, max_iterations=5, max_error=1e-9, dynamic_beta=False,
+    def solve(self, max_iterations=5, tol_sigma=1e-4, dynamic_beta=False,
               method='4d', chrom=False, twiss_mode=None, show_progress=True):
         """Find the per-bunch self-consistent closed orbit: iterate the
         multi-bunch twiss on both beams, feeding each beam's per-bunch closed
@@ -444,11 +471,12 @@ class MultibunchBBSetup:
         ----------
         max_iterations : int
             Maximum number of iterations (default 5).
-        max_error : float
-            Convergence tolerance [m]: stop once the maximum change of the x/y
-            closed orbit at all beam-beam elements (over all bunches of both
-            beams) between two successive iterations is below this (default
-            1e-9).
+        tol_sigma : float
+            Convergence tolerance, in units of the local beam size: stop once
+            the maximum change of the x/y closed orbit at all beam-beam elements
+            (over all bunches of both beams) between two successive iterations,
+            each normalised by that element's own-beam transverse size, is below
+            this (default 1e-4).
         dynamic_beta : bool
             If True, recompute the per-bunch effective (convolved) sizes from the
             live per-bunch beta functions at each iteration. Forces the
@@ -493,23 +521,26 @@ class MultibunchBBSetup:
 
             cur = np.concatenate([_orbit_vector(mbtw_cw, self.bb_names_cw),
                                   _orbit_vector(mbtw_acw, self.bb_names_acw)])
-            err = np.inf if prev is None else float(np.max(np.abs(cur - prev)))
+            sig = np.concatenate([self._sigma_vector(self.bb_cw),
+                                  self._sigma_vector(self.bb_acw)])
+            err = (np.inf if prev is None
+                   else float(np.max(np.abs(cur - prev) / sig)))
             prev = cur
 
             self.load_solution(mbtw_cw, mbtw_acw, dynamic_beta=dynamic_beta)
 
             if show_progress:
-                print(f'  multibunch orbit iteration {it}: '
-                      f'max orbit change = {err:.2e} m')
-            if err < max_error:
+                _print(f'  multibunch orbit iteration {it}: '
+                       f'max orbit change = {err:.2e} sigma')
+            if err < tol_sigma:
                 if show_progress:
-                    print(f'  converged after {it + 1} iterations '
-                          f'(< {max_error:.1e} m)')
+                    _print(f'  converged after {it + 1} iterations '
+                           f'(< {tol_sigma:.1e} sigma)')
                 break
         else:
             if show_progress:
-                print(f'  reached max_iterations={max_iterations} '
-                      f'(last change {err:.2e} m)')
+                _print(f'  reached max_iterations={max_iterations} '
+                       f'(last change {err:.2e} sigma)')
         return mbtw_cw, mbtw_acw
 
 

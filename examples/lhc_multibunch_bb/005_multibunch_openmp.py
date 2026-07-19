@@ -53,7 +53,7 @@ slots_b1, slots_b2 = setup_red.bunches_cw, setup_red.bunches_acw
 print(f'  populated bunches: B1 = {len(slots_b1)}, B2 = {len(slots_b2)}')
 
 print('Populating the beam-beam elements (one solve iteration):')
-setup_red.solve(max_iterations=1, max_error=0.0)
+setup_red.solve(max_iterations=1, tol_sigma=0.0)
 
 # ----------------------------------------------------------------------------
 # Timing: batched multibunch twiss of B1, serial vs multi-threaded kernels

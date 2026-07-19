@@ -115,7 +115,7 @@ def _run_xsuite_scenario(scenario):
     bare = setup.meta
 
     mbtw_b1, mbtw_b2 = setup_red.solve(
-        max_iterations=par['n_iter'], max_error=0.0,
+        max_iterations=par['n_iter'], tol_sigma=0.0,
         twiss_mode='fast_orbit', show_progress=False)
 
     def extract(mbtw, slots, bare_qx, bare_qy, mirror):

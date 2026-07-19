@@ -66,9 +66,12 @@ results = {}
 for label, dynamic_beta in (('static', False), ('dynamic beta', True)):
     print(f'Self-consistent solve ({label}):')
     t0 = time.time()
+    # 'fast' twiss (per-bunch optics) in both cases so the returned tables carry
+    # betx/bety for the static-vs-dynamic beta* comparison below (dynamic_beta
+    # forces it anyway; the static solve would otherwise default to fast_orbit).
     mbtw_b1, mbtw_b2 = setup_red.solve(
-        max_iterations=N_ITER, max_error=0.0,
-        dynamic_beta=dynamic_beta)
+        max_iterations=N_ITER, tol_sigma=0.0,
+        twiss_mode='fast', dynamic_beta=dynamic_beta)
     print(f'  solve time ({N_ITER} iters): {time.time() - t0:.1f} s')
     results[label] = (mbtw_b1, mbtw_b2)
 

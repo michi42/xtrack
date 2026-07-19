@@ -66,7 +66,7 @@ print(f'  populated bunches: B1 = {len(slots_b1)}, B2 = {len(slots_b2)}')
 
 print('Self-consistent solve (head-on + long-range):')
 t0 = time.time()
-mbtw_b1, mbtw_b2 = setup_red.solve(max_iterations=N_ITER, max_error=1e-9)
+mbtw_b1, mbtw_b2 = setup_red.solve(max_iterations=N_ITER)
 print(f'  solve time ({len(slots_b1)}+{len(slots_b2)} bunches, {N_ITER} iters): '
       f'{time.time() - t0:.1f} s')
 
