@@ -178,7 +178,14 @@ class MultibunchBBSetup:
     def set_filling(self, filling_clockwise, filling_anticlockwise):
         """Set the per-beam bunch filling from two arrays of length ``n_slots``
         holding the population (number of particles, zero = empty) of each slot.
-        Derives the populated slot indices and their intensities."""
+        Derives the populated slot indices and their intensities.
+
+        If the beam-beam elements are already installed, their per-bunch arrays
+        are re-registered for the new filling: the own bunch grid and design
+        sizes via :meth:`_register_own_sizes`, and the opposing state is reset
+        (reloaded on the next solve). So a setup installed for one filling (e.g.
+        the union of several fillings) can be re-solved on any subset that fits
+        the installed capacity."""
         fcw = np.asarray(filling_clockwise, dtype=float)
         facw = np.asarray(filling_anticlockwise, dtype=float)
         if len(fcw) != self.n_slots or len(facw) != self.n_slots:
@@ -191,6 +198,15 @@ class MultibunchBBSetup:
         self.bunches_acw = np.where(facw > 0)[0]
         self.num_particles_cw = fcw[self.bunches_cw]
         self.num_particles_acw = facw[self.bunches_acw]
+
+        # re-fit the installed elements to the new filling (own grid + sizes;
+        # opposing state reloaded on the next solve). Skipped during install
+        # (elements not placed / geometry not computed yet).
+        if self.bb_cw and self.geom:
+            self._register_own_sizes()
+            for bb_dict in (self.bb_cw, self.bb_acw):
+                for bb in bb_dict.values():
+                    bb.num_other_bunches = 0
 
     # ------------------------------------------------------------------
     # Building (used by install_multibunch_beambeam)
@@ -305,18 +321,15 @@ class MultibunchBBSetup:
         self._configure_bb()
 
     def _configure_bb(self):
-        """Set the (static) transverse sizes and the pairing ``zeta_offset`` on
-        the placed beam-beam elements from the computed geometry. With the design
-        (static) optics the beta functions are the same for all bunches, so the
-        own (``sigma_x``/``sigma_y``, indexed by THIS beam) and opposing
-        (``other_beam_sigma_x``/``other_beam_sigma_y``, indexed by the OTHER
-        beam) per-bunch sizes are each filled with a single value broadcast over
-        their own set of bunches."""
+        """Set the pairing ``zeta_offset`` and the (static) opposing sizes on the
+        placed beam-beam elements from the computed geometry, then register the
+        own bunch grid and own sizes (:meth:`_register_own_sizes`). With the
+        design (static) optics the beta functions are the same for all bunches, so
+        the opposing per-bunch sizes (indexed by the OTHER beam) are filled with a
+        single value broadcast over the opposing bunches."""
         ex, ey = self.nemitt_x, self.nemitt_y
         for mirror, bb_dict in ((False, self.bb_cw), (True, self.bb_acw)):
-            own, oth = ('acw', 'cw') if mirror else ('cw', 'acw')
-            n_own = (len(self.bunches_acw) if mirror
-                     else len(self.bunches_cw))
+            oth = 'cw' if mirror else 'acw'
             n_oth = (len(self.bunches_cw) if mirror
                      else len(self.bunches_acw))
             gamma0 = _gamma0(self.cw_line if not mirror else self.acw_line)
@@ -325,14 +338,32 @@ class MultibunchBBSetup:
                 bb = bb_dict[base]
                 bb.zeta_offset = (-e['offset'] if mirror else e['offset']) \
                     * self.slot_len
-                bb.sigma_x = np.full(
-                    max(n_own, 1), np.sqrt(e[f'betx_{own}'] * ex / gamma0))
-                bb.sigma_y = np.full(
-                    max(n_own, 1), np.sqrt(e[f'bety_{own}'] * ey / gamma0))
                 bb.other_beam_sigma_x = np.full(
                     max(n_oth, 1), np.sqrt(e[f'betx_{oth}'] * ex / gamma0))
                 bb.other_beam_sigma_y = np.full(
                     max(n_oth, 1), np.sqrt(e[f'bety_{oth}'] * ey / gamma0))
+        self._register_own_sizes()
+
+    def _register_own_sizes(self):
+        """(Re)register each element's OWN bunch grid (``own_beam_zeta``) and
+        static design sizes (``sigma_x``/``sigma_y``, indexed by THIS beam) for
+        the CURRENT filling. Called at install and again whenever the filling
+        changes (:meth:`set_filling`), so the per-bunch own arrays always match
+        ``self.bunches_*``. Uses the bare-optics betas cached in ``self.geom``
+        (uniform over bunches); the arrays keep their allocated capacity, so the
+        current filling must fit the one the elements were installed for."""
+        ex, ey = self.nemitt_x, self.nemitt_y
+        for mirror, bb_dict in ((False, self.bb_cw), (True, self.bb_acw)):
+            own = 'acw' if mirror else 'cw'
+            gamma0 = _gamma0(self.cw_line if not mirror else self.acw_line)
+            own_slots = self.bunches_acw if mirror else self.bunches_cw
+            own_zeta = np.asarray(own_slots) * self.slot_len
+            for base in self.enc_names:
+                e = self.geom[base]
+                bb_dict[base].update_from_own_beam(
+                    own_zeta,
+                    sigma_x=np.sqrt(e[f'betx_{own}'] * ex / gamma0),
+                    sigma_y=np.sqrt(e[f'bety_{own}'] * ey / gamma0))
 
     # ------------------------------------------------------------------
     # Sector-map reduction
@@ -396,8 +427,17 @@ class MultibunchBBSetup:
         return sigma_x, sigma_y
 
     def _sigma_vector(self, bb_dict):
-        sx = np.stack([np.asarray(bb_dict[b].sigma_x) for b in self.enc_names], axis=1)
-        sy = np.stack([np.asarray(bb_dict[b].sigma_y) for b in self.enc_names], axis=1)
+        """Own-beam per-bunch sizes laid out to match :func:`_orbit_vector` (x
+        then y, each the ``(n_bunches, n_enc)`` array raveled). :meth:`set_filling`
+        keeps every element's own arrays in sync with the solved bunches, so the
+        active per-bunch sizes (the first ``num_own_bunches`` entries, in the same
+        bunch order as the twiss) stack directly, one column per encounter"""
+        def active(bb):
+            n = int(bb.num_own_bunches)
+            return np.asarray(bb.sigma_x)[:n], np.asarray(bb.sigma_y)[:n]
+        cols = [active(bb_dict[b]) for b in self.enc_names]
+        sx = np.stack([c[0] for c in cols], axis=1)   # (n_bunches, n_enc)
+        sy = np.stack([c[1] for c in cols], axis=1)
         return np.concatenate([sx.ravel(), sy.ravel()])
 
     def _update_opposing(self, bb_dict, mbtw_other, slots_other, bb_names_other,
@@ -428,10 +468,10 @@ class MultibunchBBSetup:
                 kw = dict(other_beam_sigma_x=sigmas_other[0][:, j],
                           other_beam_sigma_y=sigmas_other[1][:, j])
             bb = bb_dict[base]
-            if sigmas_own is not None:
-                bb.sigma_x = sigmas_own[0][:, j]
-                bb.sigma_y = sigmas_own[1][:, j]
             bb.update_from_other_beam(p, **kw)
+            if sigmas_own is not None:
+                bb.update_from_own_beam(sigma_x=sigmas_own[0][:, j],
+                                        sigma_y=sigmas_own[1][:, j])
 
     def load_solution(self, mbtw_clockwise, mbtw_anticlockwise,
                       dynamic_beta=False):
